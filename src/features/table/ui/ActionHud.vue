@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { kindOf, type PlayerActionCommand, type TileId, type TileKind } from '@/shared/kernel/types'
 import { tileLabel } from '@/shared/wasm'
 import type { SeatClaimOption, SelfTurnOptions } from '../domain/tableState'
@@ -8,10 +8,13 @@ const props = defineProps<{
   isMyTurn: boolean
   selfOptions: SelfTurnOptions
   claimEntry: SeatClaimOption | null
-  waitingKinds: TileKind[]
+  waits: { kind: TileKind; left: number }[]
   selectedTileId: TileId | null
   migiSelectMode: boolean
+  isMigi: boolean
   discardedTile: TileId | null
+  discarderName: string
+  status: string
 }>()
 
 const emit = defineEmits<{
@@ -19,180 +22,189 @@ const emit = defineEmits<{
   toggleMigiMode: []
 }>()
 
-const showChiiPicker = ref(false)
+const tileSrc = (k: number) => `assets/tiles/tile_${k}.png`
+const chiiOpen = ref(false)
+watch(() => props.claimEntry, () => (chiiOpen.value = false))
 
-function handleChiiClick(): void {
-  if (!props.claimEntry) return
-  if (props.claimEntry.chiiOptions.length === 1) {
-    emit('action', { type: 'CLAIM_CHII', meldTiles: props.claimEntry.chiiOptions[0] })
-    showChiiPicker.value = false
-  } else {
-    showChiiPicker.value = !showChiiPicker.value
-  }
+const hasSelfActions = computed(
+  () =>
+    props.isMyTurn &&
+    (props.selfOptions.canTsumo ||
+      props.selfOptions.ankanOptions.length > 0 ||
+      props.selfOptions.kakanOptions.length > 0 ||
+      (props.selfOptions.migiDiscardableTiles.length > 0 && !props.isMigi) ||
+      props.selectedTileId !== null),
+)
+
+function onChii(): void {
+  const opts = props.claimEntry?.chiiOptions ?? []
+  if (opts.length === 1) emit('action', { type: 'CLAIM_CHII', meldTiles: opts[0] })
+  else chiiOpen.value = !chiiOpen.value
 }
 
-function chooseChiiPair(pair: [TileId, TileId]): void {
-  showChiiPicker.value = false
-  emit('action', { type: 'CLAIM_CHII', meldTiles: pair })
+/** 吃牌組合依牌序排列（含被吃的那張），讓玩家一眼看出順子 */
+function chiiRun(pair: [TileId, TileId]): { kind: number; claimed: boolean }[] {
+  const claimed = props.discardedTile === null ? [] : [{ kind: kindOf(props.discardedTile), claimed: true }]
+  return [...pair.map((t) => ({ kind: kindOf(t), claimed: false })), ...claimed].sort((a, b) => a.kind - b.kind)
+}
+
+function discardSelected(): void {
+  const id = props.selectedTileId
+  if (id === null) return
+  emit('action', props.migiSelectMode ? { type: 'DECLARE_MIGI', discardTileId: id } : { type: 'DISCARD', tileId: id })
 }
 </script>
 
 <template>
-  <div class="pointer-events-auto flex flex-col items-center gap-2">
-    <!-- 聽牌提示列 -->
-    <div
-      v-if="waitingKinds.length > 0"
-      class="flex items-center gap-2 rounded-full border border-amber-400/50 bg-emerald-950/90 px-3.5 py-1 text-xs shadow-lg backdrop-blur"
-    >
-      <span class="font-bold text-amber-300">聽牌：</span>
-      <div class="flex items-center gap-1.5">
-        <span
-          v-for="k in waitingKinds"
-          :key="k"
-          class="inline-flex items-center gap-1 rounded bg-emerald-800/80 px-1.5 py-0.5 font-semibold text-amber-100"
-        >
-          <img :src="`assets/tiles/tile_${k}.png`" :alt="tileLabel(k, false)" class="h-5 w-auto" />
-          {{ tileLabel(k, false) }}
+  <div class="flex w-full items-end justify-between gap-2 px-2 sm:px-4">
+    <!-- 左：狀態與聽牌資訊 -->
+    <div class="pointer-events-auto flex min-w-0 flex-col items-start gap-1.5">
+      <div
+        v-if="waits.length"
+        class="glass flex max-w-full items-center gap-2 overflow-x-auto rounded-2xl px-2.5 py-1.5"
+        aria-label="聽牌"
+      >
+        <span class="shrink-0 text-xs font-bold text-[var(--gold)]">聽</span>
+        <span v-for="w in waits" :key="w.kind" class="flex shrink-0 items-center gap-1">
+          <img :src="tileSrc(w.kind)" :alt="tileLabel(w.kind, false)" class="h-8 w-auto" :class="w.left === 0 && 'opacity-35 grayscale'" />
+          <span class="text-[11px] font-semibold tabular-nums" :class="w.left === 0 ? 'text-[var(--muted)]' : 'text-[var(--ivory)]'">
+            ×{{ w.left }}
+          </span>
         </span>
       </div>
+      <p v-if="status" class="glass rounded-full px-3 py-1 text-[11px] font-medium text-[var(--ivory)] sm:text-xs">
+        {{ status }}
+      </p>
     </div>
 
-    <!-- 多組吃牌選擇器 -->
-    <div
-      v-if="showChiiPicker && claimEntry && claimEntry.chiiOptions.length > 1"
-      class="flex items-center gap-2 rounded-xl border border-amber-400/60 bg-emerald-950/95 p-2 shadow-2xl"
-    >
-      <span class="px-2 text-xs font-bold text-amber-200">選擇吃牌組合：</span>
-      <button
-        v-for="(pair, idx) in claimEntry.chiiOptions"
-        :key="idx"
-        type="button"
-        class="flex items-center gap-1 rounded-lg border border-emerald-600 bg-emerald-900 px-2 py-1 hover:border-amber-400 cursor-pointer"
-        @click="chooseChiiPair(pair)"
-      >
-        <img :src="`assets/tiles/tile_${kindOf(pair[0])}.png`" class="h-7 w-auto" />
-        <img :src="`assets/tiles/tile_${kindOf(pair[1])}.png`" class="h-7 w-auto" />
-      </button>
-    </div>
+    <!-- 右：操作鈕（拇指熱區） -->
+    <div class="pointer-events-auto flex shrink-0 flex-col items-end gap-2">
+      <!-- 吃牌組合選擇 -->
+      <div v-if="chiiOpen && claimEntry" class="glass flex gap-1.5 rounded-2xl p-1.5">
+        <button
+          v-for="(pair, i) in claimEntry.chiiOptions"
+          :key="i"
+          type="button"
+          class="flex rounded-xl p-1 transition hover:bg-white/10 active:scale-95"
+          :aria-label="`吃 ${chiiRun(pair).map((t) => tileLabel(t.kind, false)).join('')}`"
+          @click="emit('action', { type: 'CLAIM_CHII', meldTiles: pair })"
+        >
+          <img
+            v-for="(t, j) in chiiRun(pair)"
+            :key="j"
+            :src="tileSrc(t.kind)"
+            alt=""
+            class="h-11 w-auto"
+            :class="t.claimed && '-translate-y-1 drop-shadow-[0_0_6px_var(--accent)]'"
+          />
+        </button>
+      </div>
 
-    <!-- 自身摸牌回合操作鈕 (自摸 / 暗槓 / 加槓 / 宣告聽牌 / 出牌) -->
-    <div
-      v-if="isMyTurn && (selfOptions.canTsumo || selfOptions.ankanOptions.length > 0 || selfOptions.kakanOptions.length > 0 || selfOptions.migiDiscardableTiles.length > 0 || selectedTileId !== null)"
-      class="flex flex-wrap items-center justify-center gap-2.5 rounded-2xl border border-amber-500/40 bg-emerald-950/90 px-4 py-2 shadow-2xl backdrop-blur"
-    >
-      <button
-        v-if="selfOptions.canTsumo"
-        type="button"
-        class="rounded-xl bg-gradient-to-b from-red-500 to-red-700 px-5 py-2 text-base font-extrabold text-amber-100 shadow-lg ring-2 ring-amber-300 transition hover:scale-105 cursor-pointer"
-        @click="emit('action', { type: 'TSUMO' })"
-      >
-        自摸
-      </button>
+      <!-- 他家捨牌：胡 / 槓 / 碰 / 吃 / 過 -->
+      <div v-if="claimEntry" class="flex items-end gap-2">
+        <div v-if="discardedTile !== null" class="glass mr-1 flex flex-col items-center rounded-2xl px-2 py-1.5">
+          <img :src="tileSrc(kindOf(discardedTile))" :alt="tileLabel(discardedTile)" class="h-12 w-auto" />
+          <span class="mt-0.5 max-w-16 truncate text-[10px] text-[var(--muted)]">{{ discarderName }}</span>
+        </div>
+        <button v-if="claimEntry.canRon" type="button" class="act act-win" @click="emit('action', { type: 'CLAIM_RON' })">胡</button>
+        <button v-if="claimEntry.minkanTiles" type="button" class="act act-gold" @click="emit('action', { type: 'CLAIM_MINKAN' })">槓</button>
+        <button v-if="claimEntry.ponTiles" type="button" class="act act-blue" @click="emit('action', { type: 'CLAIM_PON' })">碰</button>
+        <button v-if="claimEntry.chiiOptions.length" type="button" class="act act-jade" :aria-expanded="chiiOpen" @click="onChii">吃</button>
+        <button type="button" class="act act-ghost" @click="emit('action', { type: 'CLAIM_PASS' })">過</button>
+      </div>
 
-      <button
-        v-for="ak in selfOptions.ankanOptions"
-        :key="`ankan-${ak.kind}`"
-        type="button"
-        class="rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-amber-500 cursor-pointer"
-        @click="emit('action', { type: 'ANKAN', kind: ak.kind })"
-      >
-        暗槓 {{ tileLabel(ak.kind, false) }}
-      </button>
-
-      <button
-        v-for="kk in selfOptions.kakanOptions"
-        :key="`kakan-${kk.kind}`"
-        type="button"
-        class="rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-amber-500 cursor-pointer"
-        @click="emit('action', { type: 'KAKAN', kind: kk.kind })"
-      >
-        加槓 {{ tileLabel(kk.kind, false) }}
-      </button>
-
-      <button
-        v-if="selfOptions.migiDiscardableTiles.length > 0"
-        type="button"
-        class="rounded-xl px-4 py-2 text-sm font-bold transition cursor-pointer"
-        :class="
-          migiSelectMode
-            ? 'bg-purple-500 text-white ring-2 ring-amber-300'
-            : 'bg-purple-800/90 text-purple-100 hover:bg-purple-700'
-        "
-        @click="emit('toggleMigiMode')"
-      >
-        {{ migiSelectMode ? '取消聽牌選擇' : '聽牌 (MIGI)' }}
-      </button>
-
-      <button
-        v-if="selectedTileId !== null"
-        type="button"
-        class="rounded-xl bg-amber-400 px-4 py-2 text-sm font-extrabold text-emerald-950 shadow hover:bg-amber-300 cursor-pointer"
-        @click="
-          emit(
-            'action',
-            migiSelectMode
-              ? { type: 'DECLARE_MIGI', discardTileId: selectedTileId }
-              : { type: 'DISCARD', tileId: selectedTileId },
-          )
-        "
-      >
-        打出 {{ tileLabel(selectedTileId, true) }}
-      </button>
-    </div>
-
-    <!-- 他人捨牌後的攔胡與副露競爭視窗 (胡 / 槓 / 碰 / 吃 / 過) -->
-    <div
-      v-if="claimEntry"
-      class="flex items-center gap-2.5 rounded-2xl border border-amber-400/70 bg-emerald-950/95 px-5 py-2.5 shadow-2xl backdrop-blur"
-    >
-      <span v-if="discardedTile !== null" class="mr-1 flex items-center gap-1 text-xs text-amber-200">
-        捨牌：
-        <img :src="`assets/tiles/tile_${kindOf(discardedTile)}.png`" class="h-7 w-auto" />
-      </span>
-
-      <button
-        v-if="claimEntry.canRon"
-        type="button"
-        class="rounded-xl bg-gradient-to-b from-red-500 to-red-700 px-5 py-2 text-base font-extrabold text-amber-100 shadow-lg ring-2 ring-amber-300 transition hover:scale-105 cursor-pointer"
-        @click="emit('action', { type: 'CLAIM_RON' })"
-      >
-        胡
-      </button>
-
-      <button
-        v-if="claimEntry.minkanTiles"
-        type="button"
-        class="rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-amber-500 cursor-pointer"
-        @click="emit('action', { type: 'CLAIM_MINKAN' })"
-      >
-        槓
-      </button>
-
-      <button
-        v-if="claimEntry.ponTiles"
-        type="button"
-        class="rounded-xl bg-sky-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-sky-500 cursor-pointer"
-        @click="emit('action', { type: 'CLAIM_PON' })"
-      >
-        碰
-      </button>
-
-      <button
-        v-if="claimEntry.chiiOptions.length > 0"
-        type="button"
-        class="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-emerald-500 cursor-pointer"
-        @click="handleChiiClick"
-      >
-        吃
-      </button>
-
-      <button
-        type="button"
-        class="rounded-xl border border-slate-500/60 bg-slate-800/90 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-700 cursor-pointer"
-        @click="emit('action', { type: 'CLAIM_PASS' })"
-      >
-        過
-      </button>
+      <!-- 自己回合：自摸 / 槓 / 聽 / 打出 -->
+      <div v-else-if="hasSelfActions" class="flex flex-wrap items-end justify-end gap-2">
+        <button
+          v-for="ak in selfOptions.ankanOptions"
+          :key="`a${ak.kind}`"
+          type="button"
+          class="pill"
+          @click="emit('action', { type: 'ANKAN', kind: ak.kind })"
+        >
+          暗槓 <img :src="tileSrc(ak.kind)" :alt="tileLabel(ak.kind, false)" class="h-7 w-auto" />
+        </button>
+        <button
+          v-for="kk in selfOptions.kakanOptions"
+          :key="`k${kk.kind}`"
+          type="button"
+          class="pill"
+          @click="emit('action', { type: 'KAKAN', kind: kk.kind })"
+        >
+          加槓 <img :src="tileSrc(kk.kind)" :alt="tileLabel(kk.kind, false)" class="h-7 w-auto" />
+        </button>
+        <button
+          v-if="selfOptions.migiDiscardableTiles.length && !isMigi"
+          type="button"
+          class="pill"
+          :class="migiSelectMode && 'pill-on'"
+          :aria-pressed="migiSelectMode"
+          @click="emit('toggleMigiMode')"
+        >
+          {{ migiSelectMode ? '取消聽' : '聽牌' }}
+        </button>
+        <button v-if="selectedTileId !== null" type="button" class="pill pill-primary" @click="discardSelected">
+          {{ migiSelectMode ? '聽牌打出' : '打出' }}
+          <img :src="tileSrc(kindOf(selectedTileId))" :alt="tileLabel(selectedTileId)" class="h-7 w-auto" />
+        </button>
+        <button v-if="selfOptions.canTsumo" type="button" class="act act-win" @click="emit('action', { type: 'TSUMO' })">
+          <span class="text-xl">自摸</span>
+        </button>
+      </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+@reference '../../../style.css';
+
+.act {
+  @apply grid size-14 place-items-center rounded-full text-2xl font-black shadow-lg ring-1 ring-white/15 transition select-none active:scale-90 sm:size-16 sm:text-3xl;
+  font-family: 'Noto Serif TC', 'PMingLiU', serif;
+}
+.act-win {
+  @apply size-16 text-[var(--ivory)] sm:size-20;
+  background: radial-gradient(circle at 35% 30%, #ff7a5c, var(--accent) 55%, #a8291a);
+  box-shadow: 0 0 0 3px #ffd2c855, 0 8px 24px #f0533a66;
+  animation: beat 1.1s ease-in-out infinite;
+}
+.act-gold {
+  @apply text-[#2b1d05];
+  background: radial-gradient(circle at 35% 30%, #fbe3a1, var(--gold) 60%, #b8902f);
+}
+.act-blue {
+  @apply text-white;
+  background: radial-gradient(circle at 35% 30%, #7fb2ff, #3a6fd8 60%, #23479a);
+}
+.act-jade {
+  @apply text-white;
+  background: radial-gradient(circle at 35% 30%, #7fe0b4, #2a9d74 60%, #19684c);
+}
+.act-ghost {
+  @apply size-12 text-lg text-[var(--muted)] sm:size-14 sm:text-xl;
+  background: #0b1729cc;
+  backdrop-filter: blur(8px);
+}
+.pill {
+  @apply flex h-11 items-center gap-1.5 rounded-full px-4 text-sm font-bold text-[var(--ivory)] ring-1 ring-white/15 transition active:scale-95;
+  background: #16263fe6;
+  backdrop-filter: blur(8px);
+}
+.pill-on {
+  @apply ring-2 ring-[var(--gold)] text-[var(--gold)];
+}
+.pill-primary {
+  @apply text-white;
+  background: var(--accent);
+}
+@keyframes beat {
+  50% {
+    transform: scale(1.06);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .act-win {
+    animation: none;
+  }
+}
+</style>

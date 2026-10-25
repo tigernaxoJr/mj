@@ -28,7 +28,7 @@ const playerName = ref('台灣雀神')
 const joinCodeInput = ref('')
 const p2pMode = ref<'solo' | 'hosting' | 'joined'>('solo')
 const localSeat = ref<SeatIndex>(0)
-const statusText = ref('單機／自訂電腦席位模式（可隨時開啟 P2P 連線房）')
+const statusText = ref('單機／自選電腦牌友，或建立 P2P 連線')
 const errorText = ref('')
 const busy = ref(false)
 
@@ -78,7 +78,7 @@ async function hostP2PRoom(): Promise<void> {
       onPeerConnected: (peerSlotId) => {
         const assigned = assignHumanToSeat(room, peerSlotId, `玩家 ${peerSlotId.toUpperCase()}`)
         if (assigned !== null) {
-          statusText.value = `${peerSlotId.toUpperCase()} 已入座 ${windLabels[assigned]}家`
+          statusText.value = `${peerSlotId.toUpperCase()} 已入座 ${windLabels[assigned]}風`
           syncSnapshotToPeers()
         }
       },
@@ -90,18 +90,18 @@ async function hostP2PRoom(): Promise<void> {
       },
       onPeerDisconnected: (peerSlotId) => {
         handlePlayerDisconnect(room, peerSlotId, false)
-        statusText.value = `${peerSlotId.toUpperCase()} 已離線，座位恢復空位（可補電腦）`
+        statusText.value = `${peerSlotId.toUpperCase()} 已離線`
         syncSnapshotToPeers()
       },
       onSignalingChanged: (info) => {
-        statusText.value = `信令已連線：${info.label}`
+        statusText.value = `信令伺服器：${info.label}`
       },
     })
 
     room.roomCode = finalCode
     p2pMode.value = 'hosting'
     localSeat.value = 0
-    statusText.value = `房間已開啟！房號：${finalCode}（空位可自由配置電腦玩家）`
+    statusText.value = `房間已就緒！房號：${finalCode}`
   } catch (err: unknown) {
     errorText.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -112,7 +112,7 @@ async function hostP2PRoom(): Promise<void> {
 async function joinP2PRoom(): Promise<void> {
   const code = joinCodeInput.value.trim().toUpperCase()
   if (code.length < 4) {
-    errorText.value = '請輸入有效的 6 碼房號'
+    errorText.value = '請輸入正確的 6 碼房號'
     return
   }
   errorText.value = ''
@@ -123,7 +123,7 @@ async function joinP2PRoom(): Promise<void> {
     await transport.joinRoom(code, {
       onConnected: () => {
         p2pMode.value = 'joined'
-        statusText.value = `已連入房號 ${code}，等待房主開局...`
+        statusText.value = `已加入房號 ${code}，等待房主開局...`
       },
       onMessage: (msg: ProtocolMessage) => {
         if (msg.type === 'ROOM_SNAPSHOT') {
@@ -154,7 +154,7 @@ async function joinP2PRoom(): Promise<void> {
 }
 
 function handleStartGame(): void {
-  room.seats[0].name = playerName.value.trim() || '玩家東家'
+  room.seats[0].name = playerName.value.trim() || '本家'
   if (!isRoomReadyToStart(room)) {
     fillEmptySeatsWithBots(room)
   }
@@ -180,15 +180,18 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="fixed inset-0 flex h-[100dvh] w-full items-center justify-center bg-emerald-950 p-2.5 sm:p-4 select-none">
-    <div class="max-h-[94dvh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-amber-400/40 bg-emerald-900/85 p-4 sm:p-6 shadow-2xl backdrop-blur">
-      <!-- 標題列 -->
-      <div class="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-800 pb-4">
+  <div class="fixed inset-0 flex h-[100dvh] w-full items-center justify-center p-3 sm:p-6 select-none" style="background: radial-gradient(circle at 50% 40%, var(--felt-in), var(--felt-out))">
+    <div class="glass-card max-h-[94dvh] w-full max-w-2xl overflow-y-auto rounded-3xl p-5 sm:p-8 text-[var(--ivory)]">
+      <!-- 頂部品牌與暱稱 -->
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-5">
         <div>
-          <h1 class="text-2xl font-black tracking-wider text-amber-300 sm:text-3xl">
-            台灣 16 張麻將
-          </h1>
-          <p class="mt-0.5 text-xs text-emerald-200/85">{{ statusText }}</p>
+          <div class="flex items-center gap-2">
+            <span class="rounded bg-[var(--accent)] px-2 py-0.5 text-xs font-black tracking-widest text-white">TW 16</span>
+            <h1 class="text-2xl font-black tracking-wide text-[var(--gold)] sm:text-3xl">
+              台灣 16 張麻將
+            </h1>
+          </div>
+          <p class="mt-1 text-xs text-[var(--muted)]">{{ statusText }}</p>
         </div>
 
         <div class="flex items-center gap-2">
@@ -196,55 +199,56 @@ onUnmounted(() => {
             v-model="playerName"
             type="text"
             maxlength="10"
-            placeholder="玩家暱稱"
-            class="w-32 rounded-xl border border-emerald-700 bg-emerald-950 px-3 py-1.5 text-sm font-semibold text-amber-100 focus:border-amber-400 focus:outline-none"
+            placeholder="你的暱稱"
+            class="w-32 rounded-xl bg-white/5 border border-white/10 px-3 py-1.5 text-xs font-semibold text-[var(--ivory)] focus:border-[var(--gold)] focus:outline-none"
           />
           <span
             v-if="p2pMode !== 'solo'"
-            class="rounded-xl border border-amber-400/50 bg-amber-500/20 px-3 py-1.5 font-mono text-sm font-black text-amber-300"
+            class="rounded-xl border border-[var(--gold)]/40 bg-[var(--gold)]/10 px-3 py-1.5 font-mono text-xs font-black text-[var(--gold)]"
           >
             房號：{{ room.roomCode }}
           </span>
         </div>
       </div>
 
-      <p v-if="errorText" class="mt-3 rounded-xl bg-rose-950/90 px-3 py-2 text-xs font-semibold text-rose-300">
+      <!-- 錯誤提示 -->
+      <p v-if="errorText" class="mt-3 rounded-xl bg-rose-950/80 border border-rose-500/30 px-3 py-2 text-xs font-semibold text-rose-300">
         {{ errorText }}
       </p>
 
-      <!-- 東南西北四家席位與電腦玩家開關 -->
-      <div class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <!-- 四位雀友席次 -->
+      <div class="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div
           v-for="slot in room.seats"
           :key="slot.seat"
           class="flex flex-col justify-between rounded-2xl border p-3 transition"
           :class="
             slot.occupant === 'human'
-              ? 'border-amber-400/60 bg-emerald-950/90'
+              ? 'border-[var(--gold)]/60 bg-white/10'
               : slot.occupant === 'bot'
-                ? 'border-emerald-600/70 bg-emerald-950/75'
-                : 'border-dashed border-emerald-700/60 bg-emerald-950/40'
+                ? 'border-white/10 bg-white/5'
+                : 'border-dashed border-white/10 bg-black/20'
           "
         >
           <div>
             <div class="flex items-center justify-between">
-              <span class="rounded bg-amber-500/20 px-2 py-0.5 text-xs font-extrabold text-amber-300">
-                {{ windLabels[slot.seat] }}風席
+              <span class="rounded bg-[var(--gold)]/20 px-2 py-0.5 text-xs font-black text-[var(--gold)]">
+                {{ windLabels[slot.seat] }}風
               </span>
               <span
                 class="text-[11px] font-semibold"
                 :class="
                   slot.occupant === 'human'
-                    ? 'text-amber-200'
+                    ? 'text-[var(--gold)]'
                     : slot.occupant === 'bot'
-                      ? 'text-emerald-300'
-                      : 'text-slate-400'
+                      ? 'text-[var(--muted)]'
+                      : 'text-white/30'
                 "
               >
-                {{ slot.occupant === 'human' ? '真人' : slot.occupant === 'bot' ? '電腦 AI' : '空位' }}
+                {{ slot.occupant === 'human' ? '真人' : slot.occupant === 'bot' ? '電腦' : '空席' }}
               </span>
             </div>
-            <p class="mt-2 truncate text-sm font-bold text-amber-50">
+            <p class="mt-2.5 truncate text-sm font-bold text-[var(--ivory)]">
               {{ slot.seat === 0 && p2pMode !== 'joined' ? playerName || slot.name : slot.name }}
             </p>
           </div>
@@ -252,118 +256,112 @@ onUnmounted(() => {
           <button
             v-if="slot.seat !== 0 && p2pMode !== 'joined' && slot.occupant !== 'human'"
             type="button"
-            class="mt-3 w-full rounded-lg border py-1 text-xs font-bold transition cursor-pointer"
+            class="mt-3 w-full rounded-xl py-1 text-xs font-bold transition cursor-pointer"
             :class="
               slot.occupant === 'bot'
-                ? 'border-rose-400/40 bg-rose-500/20 text-rose-200 hover:bg-rose-500/30'
-                : 'border-emerald-400/50 bg-emerald-500/25 text-emerald-100 hover:bg-emerald-500/40'
+                ? 'bg-rose-950/40 border border-rose-500/30 text-rose-300 hover:bg-rose-900/60'
+                : 'bg-white/10 border border-white/15 text-[var(--ivory)] hover:bg-white/20'
             "
             @click="toggleBotSeat(slot.seat)"
           >
-            {{ slot.occupant === 'bot' ? '移除電腦' : '+ 加入電腦' }}
+            {{ slot.occupant === 'bot' ? '移除電腦' : '+ 電腦入座' }}
           </button>
-          <span v-else class="mt-3 block text-center text-[11px] text-emerald-400/80">
-            ✓ 已就緒
+          <span v-else class="mt-3 block text-center text-[11px] text-[var(--gold)]/80">
+            ✓ 就緒
           </span>
         </div>
       </div>
 
-      <!-- 底台規則與攔胡設定 -->
-      <div class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-800/80 bg-emerald-950/60 px-4 py-2.5 text-xs">
+      <!-- 規則設置 -->
+      <div class="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white/5 border border-white/5 px-4 py-3 text-xs">
         <div class="flex items-center gap-2">
-          <span class="font-bold text-amber-300">底／台設定：</span>
+          <span class="font-bold text-[var(--muted)]">底／台：</span>
           <button
             type="button"
-            class="rounded-lg px-2.5 py-1 font-bold transition cursor-pointer"
+            class="rounded-xl px-3 py-1 font-bold transition cursor-pointer"
             :class="
               room.rules.basePoints === 300
-                ? 'bg-amber-500 text-emerald-950'
-                : 'bg-emerald-900 text-emerald-200'
+                ? 'bg-[var(--gold)] text-slate-950 shadow'
+                : 'bg-white/10 text-[var(--ivory)]'
             "
-            @click="
-              room.rules.basePoints = 300;
-              room.rules.taiPoints = 100
-            "
+            @click="room.rules.basePoints = 300; room.rules.taiPoints = 100"
           >
             300 / 100
           </button>
           <button
             type="button"
-            class="rounded-lg px-2.5 py-1 font-bold transition cursor-pointer"
+            class="rounded-xl px-3 py-1 font-bold transition cursor-pointer"
             :class="
               room.rules.basePoints === 100
-                ? 'bg-amber-500 text-emerald-950'
-                : 'bg-emerald-900 text-emerald-200'
+                ? 'bg-[var(--gold)] text-slate-950 shadow'
+                : 'bg-white/10 text-[var(--ivory)]'
             "
-            @click="
-              room.rules.basePoints = 100;
-              room.rules.taiPoints = 20
-            "
+            @click="room.rules.basePoints = 100; room.rules.taiPoints = 20"
           >
             100 / 20
           </button>
         </div>
 
-        <label class="flex items-center gap-2 font-semibold text-emerald-100 cursor-pointer">
-          <input v-model="room.rules.allowMultiRon" type="checkbox" class="accent-amber-400" />
-          允許一炮多響（未勾選則為標準逆時針攔胡）
+        <label class="flex items-center gap-2 font-medium text-[var(--ivory)] cursor-pointer">
+          <input v-model="room.rules.allowMultiRon" type="checkbox" class="accent-[var(--accent)]" />
+          允許一炮多響
         </label>
       </div>
 
-      <!-- P2P 連線與加入房間操作區 -->
+      <!-- P2P 連線 / 開房 / 加入操作 -->
       <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div class="flex items-center gap-2 rounded-2xl border border-emerald-800/80 bg-emerald-950/50 p-2.5">
+        <div class="flex items-center gap-2 rounded-2xl bg-white/5 border border-white/5 p-2">
           <button
             type="button"
             :disabled="busy"
-            class="flex-1 rounded-xl border border-amber-400/50 bg-emerald-800/80 px-3 py-2 text-xs font-bold text-amber-200 hover:bg-emerald-700 cursor-pointer"
+            class="flex-1 rounded-xl bg-white/10 hover:bg-white/15 px-3 py-2 text-xs font-bold text-[var(--gold)] transition cursor-pointer"
             @click="hostP2PRoom"
           >
-            {{ p2pMode === 'hosting' ? `已開房 (${room.roomCode})` : '建立 P2P 連線房' }}
+            {{ p2pMode === 'hosting' ? `已開房 (${room.roomCode})` : '📡 建立連線房' }}
           </button>
           <button
             type="button"
-            class="rounded-xl border border-emerald-600 bg-emerald-900/80 px-3 py-2 text-xs font-bold text-emerald-200 hover:bg-emerald-800 cursor-pointer"
+            class="rounded-xl bg-white/10 hover:bg-white/15 px-3 py-2 text-xs font-bold text-[var(--ivory)] transition cursor-pointer"
             @click="handleFillBots"
           >
-            電腦補滿空位
+            補滿電腦
           </button>
         </div>
 
-        <div class="flex items-center gap-2 rounded-2xl border border-emerald-800/80 bg-emerald-950/50 p-2.5">
+        <div class="flex items-center gap-2 rounded-2xl bg-white/5 border border-white/5 p-2">
           <input
             v-model="joinCodeInput"
             type="text"
             maxlength="6"
             placeholder="輸入 6 碼房號"
-            class="w-full rounded-xl border border-emerald-700 bg-emerald-950 px-3 py-2 font-mono text-xs uppercase text-amber-100 focus:border-amber-400 focus:outline-none"
+            class="w-full rounded-xl bg-black/20 border border-white/10 px-3 py-2 font-mono text-xs uppercase text-[var(--ivory)] focus:border-[var(--gold)] focus:outline-none"
           />
           <button
             type="button"
             :disabled="busy"
-            class="shrink-0 rounded-xl bg-sky-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-sky-500 cursor-pointer"
+            class="shrink-0 rounded-xl bg-sky-600 hover:bg-sky-500 px-4 py-2 text-xs font-bold text-white transition cursor-pointer"
             @click="joinP2PRoom"
           >
-            加入房間
+            加入
           </button>
         </div>
       </div>
 
-      <!-- 立即開局按鈕 -->
-      <div class="mt-5">
+      <!-- 開局大按鈕 -->
+      <div class="mt-6">
         <button
           v-if="p2pMode !== 'joined'"
           type="button"
-          class="w-full rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 py-3.5 text-lg font-black tracking-wide text-emerald-950 shadow-xl transition hover:brightness-105 cursor-pointer"
+          class="w-full rounded-2xl bg-gradient-to-r from-[var(--gold)] via-amber-400 to-[var(--gold)] py-3.5 text-base font-black tracking-wide text-slate-950 shadow-xl transition hover:brightness-110 active:scale-[0.99] cursor-pointer"
           @click="handleStartGame"
         >
-          立即開局打牌（未滿席位自動由電腦補齊）
+          立即開局（未滿席位自動由電腦補齊）
         </button>
         <div
           v-else
-          class="w-full rounded-2xl border border-amber-400/40 bg-emerald-950/80 py-3 text-center text-sm font-bold text-amber-200"
+          class="w-full rounded-2xl bg-white/5 border border-[var(--gold)]/30 py-3 text-center text-xs font-bold text-[var(--gold)]"
         >
-          已連線入座，等待房主按下開局...
+          已連入房間，等待房主開局...
         </div>
       </div>
     </div>

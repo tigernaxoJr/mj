@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import Phaser from 'phaser'
 import type { PlayerActionCommand, RoomSeatSlot, RuleConfig, SeatIndex, TileId } from '@/shared/kernel/types'
 import { isAudioMuted, setAudioMuted } from '@/features/audio'
@@ -23,15 +23,19 @@ const emit = defineEmits<{
 
 const canvasHost = ref<HTMLDivElement | null>(null)
 const muted = ref(isAudioMuted())
+const handZoneHeight = ref(120)
 let game: Phaser.Game | null = null
 let tableScene: TableScene | null = null
 
 const {
   state,
   localSeat,
+  localPlayer,
   selfTurnOptions,
   localClaimEntry,
   waitingKinds,
+  tenpaiDiscards,
+  visibleCount,
   migiSelectMode,
   selectedTileId,
   initAndStartRound,
@@ -45,7 +49,33 @@ const {
   transport: props.transport ?? null,
 })
 
-const windChars: Record<SeatIndex, string> = { 0: '東', 1: '南', 2: '西', 3: '北' }
+
+const waitsWithLeft = computed(() => {
+  return waitingKinds.value.map((k) => ({
+    kind: k,
+    left: Math.max(0, 4 - visibleCount(k)),
+  }))
+})
+
+const discarderName = computed(() => {
+  if (!state.lastDiscard) return ''
+  return state.seats[state.lastDiscard.seat]?.name ?? ''
+})
+
+const turnStatus = computed(() => {
+  if (state.phase === 'ROUND_SETTLEMENT') return '本局結算中'
+  if (state.phase === 'CLAIM_WINDOW') {
+    if (localClaimEntry.value) return '等待宣告...'
+    return '等待其他玩家回應...'
+  }
+  if (state.currentSeat === localSeat.value) {
+    if (migiSelectMode.value) return '請點選一張牌宣告聽牌打出'
+    if (selectedTileId.value !== null) return '再次點選或點右側「打出」'
+    return '輪到本家出牌'
+  }
+  const cur = state.seats[state.currentSeat]
+  return `${cur?.name ?? '玩家'} 思考中...`
+})
 
 function syncScene(): void {
   if (!tableScene) return
@@ -55,6 +85,7 @@ function syncScene(): void {
     selectedTileId.value,
     migiSelectMode.value,
     selfTurnOptions.value.migiDiscardableTiles,
+    tenpaiDiscards.value,
   )
 }
 
@@ -104,13 +135,16 @@ onMounted(async () => {
     tableScene.bindCallbacks({
       onSelectTile,
       onDiscardTile,
+      onLayout: (cssH) => {
+        handZoneHeight.value = cssH
+      },
     })
     game = new Phaser.Game({
       type: Phaser.AUTO,
       parent: canvasHost.value,
       width: canvasHost.value.clientWidth || window.innerWidth,
       height: canvasHost.value.clientHeight || window.innerHeight,
-      backgroundColor: '#042f2e',
+      backgroundColor: '#0a1626',
       scale: {
         mode: Phaser.Scale.RESIZE,
         autoCenter: Phaser.Scale.CENTER_BOTH,
@@ -132,40 +166,31 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="fixed inset-0 h-[100dvh] w-full overflow-hidden bg-emerald-950 select-none">
-    <!-- Phaser 3 全畫面牌桌畫布 -->
+  <div class="fixed inset-0 h-[100dvh] w-full overflow-hidden select-none" style="background-color: var(--felt-out)">
+    <!-- Phaser 3 渲染畫布 -->
     <div ref="canvasHost" class="absolute inset-0 h-full w-full" />
 
-    <!-- 四角街機駕駛艙玩家資訊與頂部控制列 -->
-    <header class="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-between gap-1 px-2 py-1.5 sm:px-4 sm:py-2.5">
-      <div class="pointer-events-auto flex items-center gap-1.5 rounded-xl border border-amber-400/30 bg-emerald-950/85 px-2.5 py-1 text-[11px] sm:px-3 sm:py-1.5 sm:text-xs shadow backdrop-blur">
-        <span class="font-bold text-amber-300">台灣 16 張</span>
-        <span class="hidden sm:inline text-emerald-300">|</span>
-        <span class="hidden sm:inline text-emerald-100">底 {{ state.rules.basePoints }} / 台 {{ state.rules.taiPoints }}</span>
+    <!-- 頂部資訊列：精簡優雅，不搶視覺 -->
+    <header class="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-between px-3 py-2 sm:px-5 sm:py-3">
+      <div class="glass pointer-events-auto flex items-center gap-2 rounded-2xl px-3 py-1.5 text-xs text-[var(--ivory)]">
+        <span class="font-black text-[var(--gold)]">台灣 16 張</span>
+        <span class="text-white/20">|</span>
+        <span class="text-[var(--muted)]">底 {{ state.rules.basePoints }} / 台 {{ state.rules.taiPoints }}</span>
       </div>
 
-      <!-- 對家資訊卡 -->
-      <div class="rounded-xl border border-emerald-700/70 bg-emerald-950/85 px-2.5 py-1 text-[11px] sm:px-3 sm:text-xs text-amber-100 shadow backdrop-blur">
-        <span class="font-bold text-amber-300">
-          {{ windChars[(((localSeat + 2) % 4 + 4 - state.dealerSeat) % 4) as SeatIndex] }}家
-        </span>
-        · {{ state.seats[((localSeat + 2) % 4) as SeatIndex].name }}
-        <span class="ml-1 font-mono text-emerald-300">
-          ${{ state.seats[((localSeat + 2) % 4) as SeatIndex].score }}
-        </span>
-      </div>
-
-      <div class="pointer-events-auto flex items-center gap-1.5 sm:gap-2">
+      <!-- 右側按鈕群 -->
+      <div class="pointer-events-auto flex items-center gap-2">
         <button
           type="button"
-          class="rounded-xl border border-emerald-700 bg-emerald-950/85 px-2 py-1 text-[11px] sm:px-3 sm:py-1.5 sm:text-xs font-semibold text-amber-200 hover:bg-emerald-900 cursor-pointer"
+          class="glass flex size-8 items-center justify-center rounded-xl text-sm transition hover:bg-white/10 active:scale-95 cursor-pointer"
+          :title="muted ? '開啟聲音' : '靜音'"
           @click="toggleMute"
         >
-          {{ muted ? '🔇' : '🔊' }}<span class="hidden sm:inline"> {{ muted ? '靜音' : '音效' }}</span>
+          {{ muted ? '🔇' : '🔊' }}
         </button>
         <button
           type="button"
-          class="rounded-xl border border-rose-500/40 bg-emerald-950/85 px-2 py-1 text-[11px] sm:px-3 sm:py-1.5 sm:text-xs font-semibold text-rose-200 hover:bg-rose-950 cursor-pointer"
+          class="glass flex h-8 items-center rounded-xl px-3 text-xs font-semibold text-rose-300 transition hover:bg-rose-950/60 active:scale-95 cursor-pointer"
           @click="emit('leaveTable')"
         >
           離開
@@ -173,46 +198,26 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <!-- 左右家資訊徽章 -->
-    <div class="pointer-events-none absolute left-1.5 top-12 sm:left-3 sm:top-1/2 z-20 sm:-translate-y-1/2 rounded-xl border border-emerald-700/70 bg-emerald-950/85 px-2 py-1 sm:px-2.5 sm:py-2 text-[10px] sm:text-xs text-amber-100 shadow backdrop-blur">
-      <p class="font-bold text-amber-300">
-        {{ windChars[(((localSeat + 3) % 4 + 4 - state.dealerSeat) % 4) as SeatIndex] }}家<span class="hidden sm:inline">（上家）</span>
-      </p>
-      <p class="mt-0.5 truncate max-w-16 sm:max-w-24">{{ state.seats[((localSeat + 3) % 4) as SeatIndex].name }}</p>
-      <p class="font-mono text-emerald-300">${{ state.seats[((localSeat + 3) % 4) as SeatIndex].score }}</p>
-    </div>
-
-    <div class="pointer-events-none absolute right-1.5 top-12 sm:right-3 sm:top-1/2 z-20 sm:-translate-y-1/2 rounded-xl border border-emerald-700/70 bg-emerald-950/85 px-2 py-1 sm:px-2.5 sm:py-2 text-right text-[10px] sm:text-xs text-amber-100 shadow backdrop-blur">
-      <p class="font-bold text-amber-300">
-        {{ windChars[(((localSeat + 1) % 4 + 4 - state.dealerSeat) % 4) as SeatIndex] }}家<span class="hidden sm:inline">（下家）</span>
-      </p>
-      <p class="mt-0.5 truncate max-w-16 sm:max-w-24">{{ state.seats[((localSeat + 1) % 4) as SeatIndex].name }}</p>
-      <p class="font-mono text-emerald-300">${{ state.seats[((localSeat + 1) % 4) as SeatIndex].score }}</p>
-    </div>
-
-    <!-- 本家底部浮動操作 HUD 與本家分數徽章 -->
-    <footer class="pointer-events-none absolute inset-x-0 bottom-32 sm:bottom-24 z-30 flex flex-col items-center px-2 sm:px-4">
+    <!-- 浮動操作層：動態根據手牌實際高度貼合定位 -->
+    <footer
+      class="pointer-events-none absolute inset-x-0 z-30 transition-all duration-200"
+      :style="{ bottom: `${handZoneHeight + 6}px` }"
+    >
       <ActionHud
         :is-my-turn="state.phase === 'TURN_ACTION_OR_DISCARD' && state.currentSeat === localSeat"
         :self-options="selfTurnOptions"
         :claim-entry="localClaimEntry"
-        :waiting-kinds="waitingKinds"
+        :waits="waitsWithLeft"
         :selected-tile-id="selectedTileId"
         :migi-select-mode="migiSelectMode"
+        :is-migi="localPlayer.isMigi"
         :discarded-tile="state.lastDiscard?.tileId ?? null"
+        :discarder-name="discarderName"
+        :status="turnStatus"
         @action="onHudAction"
         @toggle-migi-mode="migiSelectMode = !migiSelectMode"
       />
     </footer>
-
-    <div class="pointer-events-none absolute bottom-1.5 left-2 sm:bottom-3 sm:left-4 z-20 rounded-xl border border-amber-400/40 bg-emerald-950/90 px-2.5 py-1 sm:px-3 sm:py-1.5 text-[11px] sm:text-xs text-amber-100 shadow backdrop-blur">
-      <span class="font-bold text-amber-300">
-        {{ windChars[((localSeat + 4 - state.dealerSeat) % 4) as SeatIndex] }}家（本家）
-      </span>
-      · {{ state.seats[localSeat].name }}
-      <span class="ml-1.5 font-mono font-bold text-emerald-300">${{ state.seats[localSeat].score }}</span>
-      <span class="ml-1.5 text-[10px] sm:text-[11px] text-amber-200/70">（點選看聽牌，再點打出）</span>
-    </div>
 
     <!-- 結算彈窗 -->
     <SettlementModal

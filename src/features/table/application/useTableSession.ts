@@ -8,7 +8,7 @@ import type {
   TileId,
   TileKind,
 } from '@/shared/kernel/types'
-import { DEFAULT_RULE_CONFIG } from '@/shared/kernel/types'
+import { DEFAULT_RULE_CONFIG, kindOf } from '@/shared/kernel/types'
 import {
   createCommittedWall,
   getWaitingKinds,
@@ -84,6 +84,34 @@ export function useTableSession(options: TableSessionOptions = {}) {
     }
     return []
   })
+
+  /** 輪到本家出牌時：打出後仍可聽牌的手牌集合（UI 於牌上標示提示點） */
+  const tenpaiDiscards = computed<Set<TileId>>(() => {
+    const p = localPlayer.value
+    const out = new Set<TileId>()
+    if (state.phase !== 'TURN_ACTION_OR_DISCARD' || state.currentSeat !== localSeat.value) return out
+    if (p.concealed.length !== (5 - p.melds.length) * 3 + 2) return out
+    const triedKinds = new Map<TileKind, boolean>()
+    p.concealed.forEach((t, i) => {
+      const k = kindOf(t)
+      if (!triedKinds.has(k)) {
+        const rem = [...p.concealed.slice(0, i), ...p.concealed.slice(i + 1)]
+        triedKinds.set(k, getWaitingKinds(rem, p.melds.length).length > 0)
+      }
+      if (triedKinds.get(k)) out.add(t)
+    })
+    return out
+  })
+
+  /** 本家視角已現身的某種牌張數（自己手牌 + 全體捨牌/副露/花），用於計算聽牌剩餘張數 */
+  function visibleCount(kind: TileKind): number {
+    let n = localPlayer.value.concealed.filter((t) => kindOf(t) === kind).length
+    for (const s of state.seats) {
+      n += s.discards.filter((t) => kindOf(t) === kind).length
+      for (const m of s.melds) n += m.tiles.filter((t) => kindOf(t) === kind).length
+    }
+    return n
+  }
 
   function clearBotTimer(): void {
     if (botTimer !== null) {
@@ -297,6 +325,8 @@ export function useTableSession(options: TableSessionOptions = {}) {
     selfTurnOptions,
     localClaimEntry,
     waitingKinds,
+    tenpaiDiscards,
+    visibleCount,
     migiSelectMode,
     selectedTileId,
     initAndStartRound,

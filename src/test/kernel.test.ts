@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { isFlowerKind, kindOf } from '@/shared/kernel/types'
-import { createCommittedWall, sha256Hex, verifyTileLeaf } from '@/shared/wasm'
+import { createCommittedWall, getWaitingKinds, sha256Hex, verifyTileLeaf } from '@/shared/wasm'
 import {
   addBotToSeat,
   assignHumanToSeat,
@@ -120,5 +120,20 @@ describe('Taiwan 16-tile Mahjong full core & state machine', () => {
     // 測試進入下一局連莊/換莊
     prepareNextRound(state, 'test-round-seed-43', 'test-host-secret-100')
     expect(state.phase).toBe('TURN_ACTION_OR_DISCARD')
+  })
+
+  it('correctly calculates waiting tiles for 16-tile hand', () => {
+    // 萬子 1,2,3, 4,5,6, 7,8,9, 筒子 1,1,1, 條子 2,3,4, 中,中 (共 17 張)
+    // 待摸狀態 (16 張)：萬子 1,2,3, 4,5,6, 7,8,9, 筒子 1,1,1, 條子 2,3,4, 中 (單騎中)
+    const hand16 = [
+      0, 4, 8,    // 1,2,3 萬
+      12, 16, 20, // 4,5,6 萬
+      24, 28, 32, // 7,8,9 萬
+      36, 37, 38, // 1 筒刻
+      76, 80, 84, // 2,3,4 條
+      124,        // 紅中
+    ]
+    const waits = getWaitingKinds(hand16, 0)
+    expect(waits).toContain(31) // 聽紅中
   })
 })

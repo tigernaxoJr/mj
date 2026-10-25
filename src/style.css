@@ -1,5 +1,16 @@
 @import 'tailwindcss';
 
+:root {
+  --felt-in: #25466c;
+  --felt-out: #0a1626;
+  --ink: #0b1729;
+  --line: #3d5a80;
+  --accent: #f0533a;
+  --gold: #e9c46a;
+  --ivory: #f4ecdc;
+  --muted: #8fa3bf;
+}
+
 html,
 body,
 #app {
@@ -10,4 +21,25 @@ body,
   overflow: hidden;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
+  background-color: var(--felt-out);
+  color: var(--ivory);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.glass {
+  background: rgba(11, 23, 41, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+.glass-card {
+  background: rgba(16, 30, 52, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(233, 196, 106, 0.25);
+  box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.5);
 }
