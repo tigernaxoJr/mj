@@ -18,9 +18,9 @@ const windLabels: Record<SeatIndex, string> = { 0: '東', 1: '南', 2: '西', 3:
 <template>
   <div
     v-if="state.phase === 'ROUND_SETTLEMENT' && state.settlement"
-    class="fixed inset-0 z-40 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+    class="fixed inset-0 z-40 flex items-center justify-center bg-black/75 p-2.5 sm:p-4 backdrop-blur-sm"
   >
-    <div class="w-full max-w-2xl rounded-2xl border border-amber-400/50 bg-emerald-950/95 p-6 text-amber-50 shadow-2xl">
+    <div class="max-h-[94dvh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-amber-400/50 bg-emerald-950/95 p-4 sm:p-6 text-amber-50 shadow-2xl">
       <div class="flex items-center justify-between border-b border-emerald-800 pb-3">
         <div>
           <h2 class="text-2xl font-extrabold text-amber-300">

@@ -180,8 +180,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="fixed inset-0 flex h-[100dvh] w-full items-center justify-center bg-emerald-950 p-4 select-none">
-    <div class="w-full max-w-2xl rounded-3xl border border-amber-400/40 bg-emerald-900/85 p-6 shadow-2xl backdrop-blur">
+  <div class="fixed inset-0 flex h-[100dvh] w-full items-center justify-center bg-emerald-950 p-2.5 sm:p-4 select-none">
+    <div class="max-h-[94dvh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-amber-400/40 bg-emerald-900/85 p-4 sm:p-6 shadow-2xl backdrop-blur">
       <!-- 標題列 -->
       <div class="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-800 pb-4">
         <div>

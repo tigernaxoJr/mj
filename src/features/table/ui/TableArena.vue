@@ -137,61 +137,61 @@ onUnmounted(() => {
     <div ref="canvasHost" class="absolute inset-0 h-full w-full" />
 
     <!-- 四角街機駕駛艙玩家資訊與頂部控制列 -->
-    <header class="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-between px-4 py-2.5">
-      <div class="pointer-events-auto flex items-center gap-2 rounded-xl border border-amber-400/30 bg-emerald-950/85 px-3 py-1.5 text-xs shadow backdrop-blur">
-        <span class="font-bold text-amber-300">台灣 16 張麻將</span>
-        <span class="text-emerald-300">|</span>
-        <span class="text-emerald-100">底 {{ state.rules.basePoints }} / 台 {{ state.rules.taiPoints }}</span>
+    <header class="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-between gap-1 px-2 py-1.5 sm:px-4 sm:py-2.5">
+      <div class="pointer-events-auto flex items-center gap-1.5 rounded-xl border border-amber-400/30 bg-emerald-950/85 px-2.5 py-1 text-[11px] sm:px-3 sm:py-1.5 sm:text-xs shadow backdrop-blur">
+        <span class="font-bold text-amber-300">台灣 16 張</span>
+        <span class="hidden sm:inline text-emerald-300">|</span>
+        <span class="hidden sm:inline text-emerald-100">底 {{ state.rules.basePoints }} / 台 {{ state.rules.taiPoints }}</span>
       </div>
 
       <!-- 對家資訊卡 -->
-      <div class=" rounded-xl border border-emerald-700/70 bg-emerald-950/85 px-3 py-1 text-xs text-amber-100 shadow backdrop-blur">
+      <div class="rounded-xl border border-emerald-700/70 bg-emerald-950/85 px-2.5 py-1 text-[11px] sm:px-3 sm:text-xs text-amber-100 shadow backdrop-blur">
         <span class="font-bold text-amber-300">
           {{ windChars[(((localSeat + 2) % 4 + 4 - state.dealerSeat) % 4) as SeatIndex] }}家
         </span>
         · {{ state.seats[((localSeat + 2) % 4) as SeatIndex].name }}
-        <span class="ml-1.5 font-mono text-emerald-300">
+        <span class="ml-1 font-mono text-emerald-300">
           ${{ state.seats[((localSeat + 2) % 4) as SeatIndex].score }}
         </span>
       </div>
 
-      <div class="pointer-events-auto flex items-center gap-2">
+      <div class="pointer-events-auto flex items-center gap-1.5 sm:gap-2">
         <button
           type="button"
-          class="rounded-xl border border-emerald-700 bg-emerald-950/85 px-3 py-1.5 text-xs font-semibold text-amber-200 hover:bg-emerald-900 cursor-pointer"
+          class="rounded-xl border border-emerald-700 bg-emerald-950/85 px-2 py-1 text-[11px] sm:px-3 sm:py-1.5 sm:text-xs font-semibold text-amber-200 hover:bg-emerald-900 cursor-pointer"
           @click="toggleMute"
         >
-          {{ muted ? '🔇 靜音' : '🔊 音效' }}
+          {{ muted ? '🔇' : '🔊' }}<span class="hidden sm:inline"> {{ muted ? '靜音' : '音效' }}</span>
         </button>
         <button
           type="button"
-          class="rounded-xl border border-rose-500/40 bg-emerald-950/85 px-3 py-1.5 text-xs font-semibold text-rose-200 hover:bg-rose-950 cursor-pointer"
+          class="rounded-xl border border-rose-500/40 bg-emerald-950/85 px-2 py-1 text-[11px] sm:px-3 sm:py-1.5 sm:text-xs font-semibold text-rose-200 hover:bg-rose-950 cursor-pointer"
           @click="emit('leaveTable')"
         >
-          離開牌桌
+          離開
         </button>
       </div>
     </header>
 
     <!-- 左右家資訊徽章 -->
-    <div class="pointer-events-none absolute left-3 top-1/2 z-20 -translate-y-1/2 rounded-xl border border-emerald-700/70 bg-emerald-950/85 px-2.5 py-2 text-xs text-amber-100 shadow backdrop-blur">
+    <div class="pointer-events-none absolute left-1.5 top-12 sm:left-3 sm:top-1/2 z-20 sm:-translate-y-1/2 rounded-xl border border-emerald-700/70 bg-emerald-950/85 px-2 py-1 sm:px-2.5 sm:py-2 text-[10px] sm:text-xs text-amber-100 shadow backdrop-blur">
       <p class="font-bold text-amber-300">
-        {{ windChars[(((localSeat + 3) % 4 + 4 - state.dealerSeat) % 4) as SeatIndex] }}家（上家）
+        {{ windChars[(((localSeat + 3) % 4 + 4 - state.dealerSeat) % 4) as SeatIndex] }}家<span class="hidden sm:inline">（上家）</span>
       </p>
-      <p class="mt-0.5 truncate max-w-24">{{ state.seats[((localSeat + 3) % 4) as SeatIndex].name }}</p>
+      <p class="mt-0.5 truncate max-w-16 sm:max-w-24">{{ state.seats[((localSeat + 3) % 4) as SeatIndex].name }}</p>
       <p class="font-mono text-emerald-300">${{ state.seats[((localSeat + 3) % 4) as SeatIndex].score }}</p>
     </div>
 
-    <div class="pointer-events-none absolute right-3 top-1/2 z-20 -translate-y-1/2 rounded-xl border border-emerald-700/70 bg-emerald-950/85 px-2.5 py-2 text-right text-xs text-amber-100 shadow backdrop-blur">
+    <div class="pointer-events-none absolute right-1.5 top-12 sm:right-3 sm:top-1/2 z-20 sm:-translate-y-1/2 rounded-xl border border-emerald-700/70 bg-emerald-950/85 px-2 py-1 sm:px-2.5 sm:py-2 text-right text-[10px] sm:text-xs text-amber-100 shadow backdrop-blur">
       <p class="font-bold text-amber-300">
-        {{ windChars[(((localSeat + 1) % 4 + 4 - state.dealerSeat) % 4) as SeatIndex] }}家（下家）
+        {{ windChars[(((localSeat + 1) % 4 + 4 - state.dealerSeat) % 4) as SeatIndex] }}家<span class="hidden sm:inline">（下家）</span>
       </p>
-      <p class="mt-0.5 truncate max-w-24">{{ state.seats[((localSeat + 1) % 4) as SeatIndex].name }}</p>
+      <p class="mt-0.5 truncate max-w-16 sm:max-w-24">{{ state.seats[((localSeat + 1) % 4) as SeatIndex].name }}</p>
       <p class="font-mono text-emerald-300">${{ state.seats[((localSeat + 1) % 4) as SeatIndex].score }}</p>
     </div>
 
     <!-- 本家底部浮動操作 HUD 與本家分數徽章 -->
-    <footer class="pointer-events-none absolute inset-x-0 bottom-24 z-30 flex flex-col items-center px-4">
+    <footer class="pointer-events-none absolute inset-x-0 bottom-32 sm:bottom-24 z-30 flex flex-col items-center px-2 sm:px-4">
       <ActionHud
         :is-my-turn="state.phase === 'TURN_ACTION_OR_DISCARD' && state.currentSeat === localSeat"
         :self-options="selfTurnOptions"
@@ -205,13 +205,13 @@ onUnmounted(() => {
       />
     </footer>
 
-    <div class="pointer-events-none absolute bottom-3 left-4 z-20 rounded-xl border border-amber-400/40 bg-emerald-950/90 px-3 py-1.5 text-xs text-amber-100 shadow backdrop-blur">
+    <div class="pointer-events-none absolute bottom-1.5 left-2 sm:bottom-3 sm:left-4 z-20 rounded-xl border border-amber-400/40 bg-emerald-950/90 px-2.5 py-1 sm:px-3 sm:py-1.5 text-[11px] sm:text-xs text-amber-100 shadow backdrop-blur">
       <span class="font-bold text-amber-300">
         {{ windChars[((localSeat + 4 - state.dealerSeat) % 4) as SeatIndex] }}家（本家）
       </span>
       · {{ state.seats[localSeat].name }}
-      <span class="ml-2 font-mono font-bold text-emerald-300">${{ state.seats[localSeat].score }}</span>
-      <span class="ml-2 text-[11px] text-amber-200/70">（點擊手牌選取，再點一次打出）</span>
+      <span class="ml-1.5 font-mono font-bold text-emerald-300">${{ state.seats[localSeat].score }}</span>
+      <span class="ml-1.5 text-[10px] sm:text-[11px] text-amber-200/70">（點選看聽牌，再點打出）</span>
     </div>
 
     <!-- 結算彈窗 -->
