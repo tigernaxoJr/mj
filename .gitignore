@@ -1,0 +1,18 @@
+# Node / Frontend
+node_modules/
+dist/
+.vite/
+*.local
+*.tsbuildinfo
+
+# Rust / Wasm
+target/
+Cargo.lock
+src/shared/wasm/pkg/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+.claude/

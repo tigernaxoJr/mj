@@ -1,0 +1,32 @@
+{
+  "name": "taiwan-mahjong-16-web",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.34.7",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:rust": "cargo test --manifest-path crates/mahjong-core/Cargo.toml",
+    "build:wasm": "wasm-pack build crates/mahjong-core --target web --out-dir ../../src/shared/wasm/pkg",
+    "paint:tiles": "node tools/paint_tiles.mjs"
+  },
+  "dependencies": {
+    "peerjs": "^1.5.4",
+    "phaser": "^3.90.0",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "@tailwindcss/vite": "^4.0.9",
+    "@types/node": "^22.13.5",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "tailwindcss": "^4.0.9",
+    "typescript": "~5.7.3",
+    "vite": "^6.2.0",
+    "vitest": "^3.0.5",
+    "vue-tsc": "^2.2.4"
+  }
+}
