@@ -17,7 +17,7 @@
   - **目標檔案**：`crates/mahjong-core/src/tile.rs`、`crates/mahjong-core/src/lib.rs`、`src/shared/kernel/types.ts`
   - **驗收指令**：`pnpm test:rust && pnpm test`
 
-- [ ] **WP-1.1：確定性洗牌、牌山游標與承諾雜湊驗證 (`wall.rs`)**
+- [x] **WP-1.1：確定性洗牌、牌山游標與承諾雜湊驗證 (`wall.rs`)**
   - **目標檔案**：`crates/mahjong-core/src/wall.rs`
   - **任務內容**：
     1. 實作 `SplitMix64` / `ChaCha` 確定性 PRNG 與 `Wall::from_seed(seed_hex: &str)` 洗出 144 張 `TileId (0..144)`。
@@ -25,7 +25,7 @@
     3. 實作輕量 SHA-256（或 FNV/SipHash + SHA-256）葉子雜湊產生與 `verify_tile_leaf(index, tile_id, salt, expected_hash)`，並補齊單元測試。
   - **驗收指令**：`pnpm test:rust`
 
-- [ ] **WP-1.2：手牌結構、理牌與副露管理 (`hand.rs` & `meld_check.rs`)**
+- [x] **WP-1.2：手牌結構、理牌與副露管理 (`hand.rs` & `meld_check.rs`)**
   - **目標檔案**：`crates/mahjong-core/src/hand.rs`、`crates/mahjong-core/src/meld_check.rs`
   - **任務內容**：
     1. 實作 `Hand`（暗牌 `concealed: Vec<TileId>`、副露 `melds: Vec<Meld>`、花牌 `flowers: Vec<TileId>`）與自動理牌排序。
@@ -33,7 +33,7 @@
     3. 實作 `ClaimWindow` 優先序裁決函式（`胡 > 槓/碰 > 吃` + 逆時針攔胡順位）。
   - **驗收指令**：`pnpm test:rust`
 
-- [ ] **WP-1.3：17 張胡牌檢驗、聽牌與向聽數計算 (`win_check.rs`)**
+- [x] **WP-1.3：17 張胡牌檢驗、聽牌與向聽數計算 (`win_check.rs`)**
   - **目標檔案**：`crates/mahjong-core/src/win_check.rs`
   - **任務內容**：
     1. 實作標準 17 張（$k$ 組暗面子 + $(5-k)$ 組副露 + 1 雀頭）遞迴回溯胡牌判定與面子拆解枚舉（供後續算台取最大台數拆法）。
@@ -42,7 +42,7 @@
     4. 撰寫單元測試覆蓋清一色多面聽、嚦咕嚦咕、單吊等邊界案例。
   - **驗收指令**：`pnpm test:rust`
 
-- [ ] **WP-1.4：台灣 16 張台數結算引擎 (`yaku.rs`)**
+- [x] **WP-1.4：台灣 16 張台數結算引擎 (`yaku.rs`)**
   - **目標檔案**：`crates/mahjong-core/src/yaku.rs`
   - **任務內容**：
     1. 依據 [`02-architecture-and-rules.md`](./02-architecture-and-rules.md) §3 實作完整台數判定（莊家連拉、圈門風、門清一摸三、正花/花槓、三元、平胡、碰碰胡、混/清/字一色、三/四/五暗刻、小/大三元、小/大四喜、獨聽、全求、海底/槓上/搶槓等）。
@@ -50,7 +50,7 @@
     3. 撰寫完整單元測試。
   - **驗收指令**：`pnpm test:rust`
 
-- [ ] **WP-1.5：單機啟發式 Bot AI 與 Wasm 綁定橋接 (`bot.rs`, `lib.rs`, `src/shared/wasm/index.ts`)**
+- [x] **WP-1.5：單機啟發式 Bot AI 與 Wasm 綁定橋接 (`bot.rs`, `lib.rs`, `src/shared/wasm/index.ts`)**
   - **目標檔案**：`crates/mahjong-core/src/bot.rs`、`crates/mahjong-core/src/lib.rs`、`src/shared/wasm/index.ts`
   - **任務內容**：
     1. 在 `bot.rs` 實作依向聽數進張最大化與字牌/孤張優先捨出的單機 Bot 決策（含吃/碰/槓/胡反應決策）。
@@ -61,27 +61,27 @@
 
 ## Phase 2：向量牌面烘焙與 Phaser 3 單機牌桌 (`tools/` & `src/features/table`)
 
-- [ ] **WP-2.1：程式化 SVG 麻將牌面烘焙管線 (`tools/paint_tiles.mjs`)**
+- [x] **WP-2.1：程式化 SVG 麻將牌面烘焙管線 (`tools/paint_tiles.mjs`)**
   - **目標檔案**：`tools/paint_tiles.mjs`
   - **任務內容**：
     1. 使用 SVG + `@resvg/resvg-js` 程式化生成 42 種清晰高對比台灣麻將牌面（萬、筒、條、東南西北、中發白、春夏秋冬、梅蘭竹菊）與牌背/倒牌基底，輸出至 `public/assets/tiles/`。
   - **驗收指令**：`node tools/paint_tiles.mjs`
 
-- [ ] **WP-2.2：牌桌確定性狀態機與單機回合調度 (`table/domain` & `table/application`)**
+- [x] **WP-2.2：牌桌確定性狀態機與單機回合調度 (`table/domain` & `table/application`)**
   - **目標檔案**：`src/features/table/domain/tableState.ts`、`src/features/table/application/useTableSession.ts`
   - **任務內容**：
     1. 實作開門補花、摸打循環、鐵八墩流局、過水鎖定、`ClaimWindow` 攔胡裁決與連莊/換莊狀態轉移。
     2. 串接 3 個單機 Bot 自動回應與出牌，並補齊狀態機單元測試。
   - **驗收指令**：`pnpm test && pnpm build`
 
-- [ ] **WP-2.3：Phaser 3 牌桌渲染場景 (`table/engine/TableScene.ts`)**
+- [x] **WP-2.3：Phaser 3 牌桌渲染場景 (`table/engine/TableScene.ts`)**
   - **目標檔案**：`src/features/table/engine/TableScene.ts`
   - **任務內容**：
     1. 渲染綠色絨布桌面、中央風圈/門風/剩餘牌數羅盤、四家手牌（本家可點擊選牌出牌、三家立牌）、四家牌海（每排 6 張整齊排列）、花牌區與吃碰槓副露區。
     2. 實作摸牌、補花、出牌入海的流暢 Tween 動畫與最後捨牌高亮標記。
   - **驗收指令**：`pnpm build`
 
-- [ ] **WP-2.4：100dvh 街機駕駛艙 HUD 與結算面板 (`table/ui/`)**
+- [x] **WP-2.4：100dvh 街機駕駛艙 HUD 與結算面板 (`table/ui/`)**
   - **目標檔案**：`src/features/table/ui/TableArena.vue`、`src/features/table/ui/ActionHud.vue`、`src/features/table/ui/SettlementModal.vue`
   - **任務內容**：
     1. 實作本家手牌上方的吃（支援多組順子選擇）/碰/槓/聽/胡/過浮動按鈕列與聽牌提示徽章。
@@ -92,14 +92,14 @@
 
 ## Phase 3：PeerJS 零伺服器 P2P 連線與防作弊同步 (`src/features/lobby` & `table/application`)
 
-- [ ] **WP-3.1：PeerJS 星狀連線介面卡與房間狀態 (`lobby/infra` & `lobby/domain`)**
+- [x] **WP-3.1：PeerJS 星狀連線介面卡與房間狀態 (`lobby/infra` & `lobby/domain`)**
   - **目標檔案**：`src/features/lobby/infra/peerAdapter.ts`、`src/features/lobby/domain/roomSession.ts`
   - **任務內容**：
     1. 實作 `twmj-<6碼房號>` 公開信令開房、撞號重試、入房連線、開局 `lockRoom()` 與斷線偵測。
     2. 支援 4 人星狀房間（東/南/西/北座位分配、底台設定、缺人由 Bot 補位、中途斷線無縫切換 Bot 代打）。
   - **驗收指令**：`pnpm test && pnpm build`
 
-- [ ] **WP-3.2：大廳配對 UI 與 P2P `Co-Seeded Commit-Reveal` 牌局同步 (`lobby/ui` & `table/application`)**
+- [x] **WP-3.2：大廳配對 UI 與 P2P `Co-Seeded Commit-Reveal` 牌局同步 (`lobby/ui` & `table/application`)**
   - **目標檔案**：`src/features/lobby/ui/LobbyHub.vue`、`src/features/table/application/useTableSession.ts`、`src/App.vue`
   - **任務內容**：
     1. 實作大廳「單機立即開打 / 建立房間 / 輸入 6 碼房號加入」零捲動 UI。
@@ -110,13 +110,13 @@
 
 ## Phase 4：音效語音、特效手感與 CI 部署 (`src/features/audio` & `.github/workflows`)
 
-- [ ] **WP-4.1：Web Audio 程序化麻將音效與語音提示 (`src/features/audio/index.ts`)**
+- [x] **WP-4.1：Web Audio 程序化麻將音效與語音提示 (`src/features/audio/index.ts`)**
   - **目標檔案**：`src/features/audio/index.ts`
   - **任務內容**：
     1. 單檔實作麻將理牌聲、摸牌聲、捨牌清脆碰撞聲、吃/碰/槓/胡/自摸合成音效（或 Web Speech API 國/台語發音）與靜音開關。
   - **驗收指令**：`pnpm build`
 
-- [ ] **WP-4.2：吃碰槓胡大字印章特效與 GitHub Pages 自動部署**
+- [x] **WP-4.2：吃碰槓胡大字印章特效與 GitHub Pages 自動部署**
   - **目標檔案**：`src/features/table/engine/TableScene.ts`、`.github/workflows/deploy.yml`
   - **任務內容**：
     1. 加入吃/碰/槓/胡/自摸畫面微震動、閃光與書法印章動畫。

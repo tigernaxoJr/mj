@@ -1,12 +1,29 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { LobbyHub } from '@/features/lobby'
+import { shallowRef } from 'vue'
+import { LobbyHub, type StartMatchPayload } from '@/features/lobby'
 import { TableArena } from '@/features/table'
 
-const inTable = ref(false)
+const activeMatch = shallowRef<StartMatchPayload | null>(null)
+
+function handleStartMatch(payload: StartMatchPayload): void {
+  activeMatch.value = payload
+}
+
+function handleLeaveTable(): void {
+  activeMatch.value?.transport?.disconnect()
+  activeMatch.value = null
+}
 </script>
 
 <template>
-  <TableArena v-if="inTable" />
-  <LobbyHub v-else @start-solo="inTable = true" />
+  <TableArena
+    v-if="activeMatch"
+    :local-seat="activeMatch.localSeat"
+    :is-host="activeMatch.isHost"
+    :rules="activeMatch.rules"
+    :room-seats="activeMatch.roomSeats"
+    :transport="activeMatch.transport"
+    @leave-table="handleLeaveTable"
+  />
+  <LobbyHub v-else @start-match="handleStartMatch" />
 </template>

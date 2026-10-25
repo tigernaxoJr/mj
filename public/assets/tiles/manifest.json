@@ -1,0 +1,343 @@
+{
+  "width": 96,
+  "height": 132,
+  "back": "tile_back.png",
+  "tiles": [
+    {
+      "kind": 0,
+      "name": "一萬",
+      "suit": "character",
+      "rank": 1,
+      "flowerSeat": null,
+      "file": "tile_0.png"
+    },
+    {
+      "kind": 1,
+      "name": "二萬",
+      "suit": "character",
+      "rank": 2,
+      "flowerSeat": null,
+      "file": "tile_1.png"
+    },
+    {
+      "kind": 2,
+      "name": "三萬",
+      "suit": "character",
+      "rank": 3,
+      "flowerSeat": null,
+      "file": "tile_2.png"
+    },
+    {
+      "kind": 3,
+      "name": "四萬",
+      "suit": "character",
+      "rank": 4,
+      "flowerSeat": null,
+      "file": "tile_3.png"
+    },
+    {
+      "kind": 4,
+      "name": "五萬",
+      "suit": "character",
+      "rank": 5,
+      "flowerSeat": null,
+      "file": "tile_4.png"
+    },
+    {
+      "kind": 5,
+      "name": "六萬",
+      "suit": "character",
+      "rank": 6,
+      "flowerSeat": null,
+      "file": "tile_5.png"
+    },
+    {
+      "kind": 6,
+      "name": "七萬",
+      "suit": "character",
+      "rank": 7,
+      "flowerSeat": null,
+      "file": "tile_6.png"
+    },
+    {
+      "kind": 7,
+      "name": "八萬",
+      "suit": "character",
+      "rank": 8,
+      "flowerSeat": null,
+      "file": "tile_7.png"
+    },
+    {
+      "kind": 8,
+      "name": "九萬",
+      "suit": "character",
+      "rank": 9,
+      "flowerSeat": null,
+      "file": "tile_8.png"
+    },
+    {
+      "kind": 9,
+      "name": "一筒",
+      "suit": "dot",
+      "rank": 1,
+      "flowerSeat": null,
+      "file": "tile_9.png"
+    },
+    {
+      "kind": 10,
+      "name": "二筒",
+      "suit": "dot",
+      "rank": 2,
+      "flowerSeat": null,
+      "file": "tile_10.png"
+    },
+    {
+      "kind": 11,
+      "name": "三筒",
+      "suit": "dot",
+      "rank": 3,
+      "flowerSeat": null,
+      "file": "tile_11.png"
+    },
+    {
+      "kind": 12,
+      "name": "四筒",
+      "suit": "dot",
+      "rank": 4,
+      "flowerSeat": null,
+      "file": "tile_12.png"
+    },
+    {
+      "kind": 13,
+      "name": "五筒",
+      "suit": "dot",
+      "rank": 5,
+      "flowerSeat": null,
+      "file": "tile_13.png"
+    },
+    {
+      "kind": 14,
+      "name": "六筒",
+      "suit": "dot",
+      "rank": 6,
+      "flowerSeat": null,
+      "file": "tile_14.png"
+    },
+    {
+      "kind": 15,
+      "name": "七筒",
+      "suit": "dot",
+      "rank": 7,
+      "flowerSeat": null,
+      "file": "tile_15.png"
+    },
+    {
+      "kind": 16,
+      "name": "八筒",
+      "suit": "dot",
+      "rank": 8,
+      "flowerSeat": null,
+      "file": "tile_16.png"
+    },
+    {
+      "kind": 17,
+      "name": "九筒",
+      "suit": "dot",
+      "rank": 9,
+      "flowerSeat": null,
+      "file": "tile_17.png"
+    },
+    {
+      "kind": 18,
+      "name": "一條",
+      "suit": "bamboo",
+      "rank": 1,
+      "flowerSeat": null,
+      "file": "tile_18.png"
+    },
+    {
+      "kind": 19,
+      "name": "二條",
+      "suit": "bamboo",
+      "rank": 2,
+      "flowerSeat": null,
+      "file": "tile_19.png"
+    },
+    {
+      "kind": 20,
+      "name": "三條",
+      "suit": "bamboo",
+      "rank": 3,
+      "flowerSeat": null,
+      "file": "tile_20.png"
+    },
+    {
+      "kind": 21,
+      "name": "四條",
+      "suit": "bamboo",
+      "rank": 4,
+      "flowerSeat": null,
+      "file": "tile_21.png"
+    },
+    {
+      "kind": 22,
+      "name": "五條",
+      "suit": "bamboo",
+      "rank": 5,
+      "flowerSeat": null,
+      "file": "tile_22.png"
+    },
+    {
+      "kind": 23,
+      "name": "六條",
+      "suit": "bamboo",
+      "rank": 6,
+      "flowerSeat": null,
+      "file": "tile_23.png"
+    },
+    {
+      "kind": 24,
+      "name": "七條",
+      "suit": "bamboo",
+      "rank": 7,
+      "flowerSeat": null,
+      "file": "tile_24.png"
+    },
+    {
+      "kind": 25,
+      "name": "八條",
+      "suit": "bamboo",
+      "rank": 8,
+      "flowerSeat": null,
+      "file": "tile_25.png"
+    },
+    {
+      "kind": 26,
+      "name": "九條",
+      "suit": "bamboo",
+      "rank": 9,
+      "flowerSeat": null,
+      "file": "tile_26.png"
+    },
+    {
+      "kind": 27,
+      "name": "東",
+      "suit": "wind",
+      "rank": null,
+      "flowerSeat": null,
+      "file": "tile_27.png"
+    },
+    {
+      "kind": 28,
+      "name": "南",
+      "suit": "wind",
+      "rank": null,
+      "flowerSeat": null,
+      "file": "tile_28.png"
+    },
+    {
+      "kind": 29,
+      "name": "西",
+      "suit": "wind",
+      "rank": null,
+      "flowerSeat": null,
+      "file": "tile_29.png"
+    },
+    {
+      "kind": 30,
+      "name": "北",
+      "suit": "wind",
+      "rank": null,
+      "flowerSeat": null,
+      "file": "tile_30.png"
+    },
+    {
+      "kind": 31,
+      "name": "中",
+      "suit": "dragon",
+      "rank": null,
+      "flowerSeat": null,
+      "file": "tile_31.png"
+    },
+    {
+      "kind": 32,
+      "name": "發",
+      "suit": "dragon",
+      "rank": null,
+      "flowerSeat": null,
+      "file": "tile_32.png"
+    },
+    {
+      "kind": 33,
+      "name": "白",
+      "suit": "dragon",
+      "rank": null,
+      "flowerSeat": null,
+      "file": "tile_33.png"
+    },
+    {
+      "kind": 34,
+      "name": "春",
+      "suit": "flower",
+      "rank": 1,
+      "flowerSeat": 1,
+      "file": "tile_34.png"
+    },
+    {
+      "kind": 35,
+      "name": "夏",
+      "suit": "flower",
+      "rank": 2,
+      "flowerSeat": 2,
+      "file": "tile_35.png"
+    },
+    {
+      "kind": 36,
+      "name": "秋",
+      "suit": "flower",
+      "rank": 3,
+      "flowerSeat": 3,
+      "file": "tile_36.png"
+    },
+    {
+      "kind": 37,
+      "name": "冬",
+      "suit": "flower",
+      "rank": 4,
+      "flowerSeat": 4,
+      "file": "tile_37.png"
+    },
+    {
+      "kind": 38,
+      "name": "梅",
+      "suit": "flower",
+      "rank": 1,
+      "flowerSeat": 1,
+      "file": "tile_38.png"
+    },
+    {
+      "kind": 39,
+      "name": "蘭",
+      "suit": "flower",
+      "rank": 2,
+      "flowerSeat": 2,
+      "file": "tile_39.png"
+    },
+    {
+      "kind": 40,
+      "name": "竹",
+      "suit": "flower",
+      "rank": 3,
+      "flowerSeat": 3,
+      "file": "tile_40.png"
+    },
+    {
+      "kind": 41,
+      "name": "菊",
+      "suit": "flower",
+      "rank": 4,
+      "flowerSeat": 4,
+      "file": "tile_41.png"
+    }
+  ]
+}

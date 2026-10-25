@@ -10,6 +10,7 @@ import {
 const ROOM_CHARS = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'
 const SEAT_WINDS: readonly WindName[] = ['east', 'south', 'west', 'north']
 const BOT_NAMES: readonly string[] = ['電腦東風', '電腦南風', '電腦西風', '電腦北風']
+const ALL_SEATS: readonly SeatIndex[] = [0, 1, 2, 3]
 
 export interface RoomSessionState {
   roomCode: string
@@ -86,11 +87,69 @@ export function removeBotFromSeat(session: RoomSessionState, seat: SeatIndex): b
 
 /** 一鍵將所有空位補滿電腦玩家 */
 export function fillEmptySeatsWithBots(session: RoomSessionState): void {
-  for (const s of [0, 1, 2, 3] as const) {
+  for (const s of ALL_SEATS) {
     if (session.seats[s].occupant === 'empty') {
       session.seats[s] = createBotSeat(s)
     }
   }
+}
+
+/**
+ * 將真人玩家排入座位（優先使用空位；若無空位但有電腦座位，自動替換首位電腦）
+ */
+export function assignHumanToSeat(
+  session: RoomSessionState,
+  playerId: PlayerId,
+  name: string,
+  preferredSeat?: SeatIndex,
+): SeatIndex | null {
+  const existing = session.seats.find((s) => s.playerId === playerId)
+  const trimmedName = name.trim()
+
+  if (existing) {
+    existing.occupant = 'human'
+    existing.name = trimmedName || existing.name
+    existing.ready = true
+    return existing.seat
+  }
+
+  let targetSeat: SeatIndex | undefined
+  if (preferredSeat !== undefined && session.seats[preferredSeat].occupant !== 'human') {
+    targetSeat = preferredSeat
+  } else {
+    targetSeat =
+      ALL_SEATS.find((s) => session.seats[s].occupant === 'empty') ??
+      ALL_SEATS.find((s) => session.seats[s].occupant === 'bot')
+  }
+
+  if (targetSeat === undefined) return null
+
+  session.seats[targetSeat] = {
+    seat: targetSeat,
+    wind: SEAT_WINDS[targetSeat],
+    occupant: 'human',
+    playerId,
+    name: trimmedName || `玩家 ${targetSeat + 1}`,
+    ready: true,
+  }
+  return targetSeat
+}
+
+/**
+ * 處理遠端玩家離線或中途斷線：
+ * - `convertToBot = true`（對局進行中）：無縫切換為 Bot 代打
+ * - `convertToBot = false`（大廳等待中）：釋放為空位
+ */
+export function handlePlayerDisconnect(
+  session: RoomSessionState,
+  playerId: PlayerId,
+  convertToBot = true,
+): SeatIndex | null {
+  const slot = session.seats.find((s) => s.playerId === playerId)
+  if (!slot) return null
+  const seat = slot.seat
+  session.seats[seat] = convertToBot ? createBotSeat(seat) : createEmptySeat(seat)
+  return seat
 }
 
 /** 檢查四家是否皆已就緒（真人 + 電腦滿 4 席且 ready） */
