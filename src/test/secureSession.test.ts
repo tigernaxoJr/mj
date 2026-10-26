@@ -70,7 +70,11 @@ describe('table session in mental poker mode (host + guest + 2 bots)', () => {
         // 真人只在畫面會出現操作鈕時行動（與 UI 相同的入口）
         for (const s of [host, guest]) {
           const me = s.localSeat.value
-          const myTurn = s.state.phase === 'TURN_ACTION_OR_DISCARD' && s.state.currentSeat === me && !s.localPlayer.value.isMigi
+          // 聽牌後摸切由本機自動處理；能自摸時才要玩家自己按
+          const myTurn =
+            s.state.phase === 'TURN_ACTION_OR_DISCARD' &&
+            s.state.currentSeat === me &&
+            (!s.localPlayer.value.isMigi || s.selfTurnOptions.value.canTsumo)
           if (s.localClaimEntry.value || myTurn) {
             const cmd = decideBotActionForSeat(s.state, me)
             if (cmd) s.dispatchAction(me, cmd)
