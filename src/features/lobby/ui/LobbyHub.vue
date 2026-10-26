@@ -26,7 +26,8 @@ import {
   unconfirmedSeats,
 } from '../domain/identityHandshake'
 import { createPeerTransport, type PeerTransportPort } from '../infra/peerAdapter'
-import { verifyEvidence, type EvidenceLog, type EvidenceReport } from '@/features/table'
+import { verifyEvidence, type EvidenceReport } from '@/features/table/application/evidenceVerifier'
+import type { EvidenceLog } from '@/features/table/application/secureChannel'
 
 /** 兩位以上真人時的身分資料；牌桌用它簽章與加密金鑰分享 */
 export interface MatchSecurity {
