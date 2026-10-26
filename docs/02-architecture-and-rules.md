@@ -96,7 +96,7 @@
 
 ### 4.1 Mental Poker 牌局（兩位以上真人）
 
-1. **大廳身分握手（未簽章）**：`IDENTITY_COMMIT {commit = sha256(公鑰)}` → 房主按開局鎖定 `IDENTITY_ROSTER` → 各家 `IDENTITY_REVEAL {signPub, boxPub}` → `IDENTITY_KEYS`。每台裝置自行計算 4 個 emoji 的房間安全碼，口頭比對一致才開局。
+1. **大廳身分握手（未簽章）**：`IDENTITY_COMMIT {commit = sha256(公鑰)}` → 房主按開局鎖定 `IDENTITY_ROSTER` → 各家 `IDENTITY_REVEAL {signPub, boxPub}` → `IDENTITY_KEYS`。每台裝置自行計算 4 個 emoji 的房間安全碼，口頭比對；每位客機都要親自按「一致」（`IDENTITY_CONFIRM`）房主才能開局，客機沒確認前也不會進入牌局。
 2. **簽章信封**：之後所有訊息包成 `SIGNED {seat, n, body, sig}`（ed25519、序號遞增）。房主驗證後原封不動轉送給全部客機（含發送者），是唯一的排序者。每台裝置保存全部信封，可在結算畫面「紀錄」下載，任何人可在大廳「驗證對局紀錄檔」重新驗簽、稽核並重算分數。
 3. **洗牌與換鑰**：`ROUND_START` → 各真人依座位順序 `DECK_SHUFFLED`，再依序 `DECK_REKEYED`（附 144 筆逐張鎖承諾）。
 4. **摸牌**：規則引擎讀到未宣告的牌山位置時，各層持有者把逐張鎖以 `crypto_box` 封給摸牌者（電腦座位則封給房主）：`KEY_SHARE`；摸牌者開鎖後 `TILE_RESOLVE`（花牌附金鑰公開）。

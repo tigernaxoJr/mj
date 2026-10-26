@@ -18,7 +18,13 @@ import {
   isRoomReadyToStart,
   removeBotFromSeat,
 } from '../domain/roomSession'
-import { checkMembersAgainstRoster, identityCommit, memberKeysOf, safetyCode } from '../domain/identityHandshake'
+import {
+  checkMembersAgainstRoster,
+  identityCommit,
+  memberKeysOf,
+  safetyCode,
+  unconfirmedSeats,
+} from '../domain/identityHandshake'
 import { createPeerTransport, type PeerTransportPort } from '../infra/peerAdapter'
 import { verifyEvidence, type EvidenceLog, type EvidenceReport } from '@/features/table'
 
@@ -69,6 +75,12 @@ let members: RoomMemberKeys[] = []
 type Handshake = 'idle' | 'collecting' | 'verify'
 const handshake = ref<Handshake>('idle')
 const safetyEmoji = ref<string[] | null>(null)
+/** 客機：本人已按「一致」；房主：已確認的客機座位。安全碼一定要每個人親自比對才能開局 */
+const iConfirmed = ref(false)
+const confirmedSeats = ref<SeatIndex[]>([])
+const waitingConfirm = computed(() =>
+  unconfirmedSeats(humanSeats().map((s) => s.seat), confirmedSeats.value),
+)
 
 async function prepareIdentity(): Promise<void> {
   await initMahjongWasm()
@@ -90,6 +102,8 @@ function resetHandshake(): void {
   }
   handshake.value = 'idle'
   safetyEmoji.value = null
+  iConfirmed.value = false
+  confirmedSeats.value = []
   revealed.clear()
   members = []
 }
@@ -149,8 +163,34 @@ function guestOnKeys(list: RoomMemberKeys[]): void {
   statusText.value = '與每位玩家比對安全碼，一致才繼續'
 }
 
+/** 客機：本人比對一致 */
+function confirmSafety(): void {
+  if (handshake.value !== 'verify' || iConfirmed.value) return
+  iConfirmed.value = true
+  statusText.value = '已確認安全碼，等待房主開局…'
+  transport?.sendToHost({ type: 'IDENTITY_CONFIRM' })
+}
+
+/** 客機：安全碼不一致，有人被冒充，直接離開房間 */
+function rejectSafety(): void {
+  transport?.disconnect()
+  transport = null
+  resetHandshake()
+  p2pMode.value = 'solo'
+  errorText.value = '安全碼不一致：房間裡有人被冒充，已離開房間'
+}
+
+function onGuestConfirm(peer: PlayerId): void {
+  if (handshake.value !== 'verify') return
+  const slot = room.seats.find((s) => s.playerId === peer && s.occupant === 'human')
+  if (slot && !confirmedSeats.value.includes(slot.seat)) {
+    confirmedSeats.value = [...confirmedSeats.value, slot.seat]
+  }
+}
+
 function security(): MatchSecurity | undefined {
   if (handshake.value !== 'verify' || !seeds || !safetyEmoji.value) return undefined
+  if (p2pMode.value === 'joined' && !iConfirmed.value) return undefined
   return { roomCode: room.roomCode, seeds, members, safetyCode: safetyEmoji.value }
 }
 
@@ -173,7 +213,10 @@ async function onEvidenceFile(ev: Event): Promise<void> {
 
 const startLabel = computed(() => {
   if (handshake.value === 'collecting') return '比對身分中…'
-  if (handshake.value === 'verify') return '安全碼一致，開局'
+  if (handshake.value === 'verify') {
+    const n = waitingConfirm.value.length
+    return n > 0 ? `等待 ${n} 位玩家確認安全碼` : '安全碼一致，開局'
+  }
   return '開局'
 })
 
@@ -301,6 +344,8 @@ async function hostP2PRoom(): Promise<void> {
           guestCommits.set(peerSlotId, msg.commit)
         } else if (msg.type === 'IDENTITY_REVEAL') {
           onGuestReveal(peerSlotId, msg.signPub, msg.boxPub)
+        } else if (msg.type === 'IDENTITY_CONFIRM') {
+          onGuestConfirm(peerSlotId)
         }
       },
       onPeerDisconnected: (peerSlotId) => {
@@ -362,8 +407,13 @@ async function joinP2PRoom(): Promise<void> {
           statusText.value = '房間成員變動，等待房主重新比對身分'
         } else if (msg.type === 'SEED_COMMIT' || msg.type === 'SIGNED') {
           const sec = security()
-          // 簽章牌局一定要先完成身分比對，否則無從驗證
-          if (msg.type === 'SIGNED' && !sec) return
+          // 簽章牌局一定要先完成身分比對，而且本人親自確認過安全碼
+          if (msg.type === 'SIGNED' && !sec) {
+            errorText.value = iConfirmed.value
+              ? '身分比對未完成，無法加入牌局'
+              : '房主沒等你確認安全碼就開局，已拒絕加入；請重新加入房間'
+            return
+          }
           keepTransportOnUnmount = true
           // 牌桌掛載前先暫存後續訊息，避免漏接房主的出牌
           transport?.holdMessages()
@@ -403,6 +453,10 @@ function handleStartGame(): void {
       return
     }
     if (handshake.value === 'collecting') return
+    if (waitingConfirm.value.length > 0) {
+      errorText.value = '每位玩家都要在自己的畫面按「一致」才能開局'
+      return
+    }
   }
   if (p2pMode.value === 'hosting' && transport) {
     transport.lockRoom()
@@ -573,11 +627,20 @@ onUnmounted(() => {
           <div v-if="safetyEmoji" class="flex w-full items-center justify-between gap-3" aria-live="polite">
             <div class="min-w-0">
               <p class="text-[10px] font-bold tracking-widest text-[var(--muted)]">房間安全碼 · 與每位玩家口頭比對</p>
-              <p class="text-[11px] leading-snug text-[var(--muted)]">四家看到的必須完全相同，不同就是有人被冒充</p>
+              <p class="text-3xl leading-tight tracking-[0.15em]" role="img" :aria-label="`安全碼 ${safetyEmoji.join(' ')}`">
+                {{ safetyEmoji.join('') }}
+              </p>
+              <p v-if="p2pMode === 'hosting'" class="text-[11px] leading-snug text-[var(--muted)]">
+                {{ waitingConfirm.length ? `已確認 ${humanSeats().length - 1 - waitingConfirm.length}/${humanSeats().length - 1} 位玩家` : '所有玩家都已確認一致' }}
+              </p>
+              <p v-else class="text-[11px] leading-snug text-[var(--muted)]">
+                {{ iConfirmed ? '已確認，等待房主開局' : '每家看到的必須完全相同，不同就是有人被冒充' }}
+              </p>
             </div>
-            <p class="shrink-0 text-3xl tracking-[0.15em]" role="img" :aria-label="`安全碼 ${safetyEmoji.join(' ')}`">
-              {{ safetyEmoji.join('') }}
-            </p>
+            <div v-if="p2pMode === 'joined' && !iConfirmed" class="flex shrink-0 flex-col gap-1.5">
+              <button type="button" class="btn-brass h-8 rounded-lg px-3 text-xs font-black" @click="confirmSafety">一致</button>
+              <button type="button" class="btn-ghost h-8 rounded-lg px-3 text-xs font-bold" @click="rejectSafety">不一致</button>
+            </div>
           </div>
           <div v-else-if="tab === 'solo'" class="flex w-full items-center justify-between gap-3">
             <p class="text-xs leading-relaxed text-[var(--muted)]">與電腦牌友對戰；點座位增減電腦，空位開局時自動補齊。</p>
@@ -647,7 +710,7 @@ onUnmounted(() => {
           v-if="p2pMode !== 'joined' && tab !== 'join'"
           type="button"
           class="btn-brass mt-4 short:mt-3 short:h-12 flex h-14 w-full items-center justify-center rounded-2xl font-serif text-lg font-black tracking-[0.4em] transition active:scale-[0.99]"
-          :disabled="handshake === 'collecting'"
+:disabled="handshake === 'collecting' || (handshake === 'verify' && waitingConfirm.length > 0)"
           @click="handleStartGame"
         >
           {{ startLabel }}

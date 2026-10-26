@@ -133,6 +133,8 @@ export type ProtocolMessage =
   | { type: 'IDENTITY_REVEAL'; signPub: string; boxPub: string }
   | { type: 'IDENTITY_KEYS'; members: RoomMemberKeys[] }
   | { type: 'IDENTITY_RESET' }
+  /** 客機：本人已比對安全碼一致（房主要等所有人確認才能開局；客機沒確認前也不會進入牌局） */
+  | { type: 'IDENTITY_CONFIRM' }
   // --- Mental Poker 牌山協定（一律包在 SignedEnvelope 內）---
   | { type: 'ROUND_START'; round: number }
   | { type: 'DECK_SHUFFLED'; round: number; seat: SeatIndex; deck: string }

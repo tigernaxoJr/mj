@@ -67,3 +67,8 @@ export function safetyCode(roomCode: string, members: readonly RoomMemberKeys[])
   const bits = (fp[0] << 16) | (fp[1] << 8) | fp[2]
   return [18, 12, 6, 0].map((shift) => SAFETY_EMOJI[(bits >> shift) & 63])
 }
+
+/** 還沒確認安全碼的真人客機座位（房主自己按開局即視為確認） */
+export function unconfirmedSeats(humanSeats: readonly SeatIndex[], confirmed: readonly SeatIndex[]): SeatIndex[] {
+  return humanSeats.filter((s) => s !== 0 && !confirmed.includes(s))
+}

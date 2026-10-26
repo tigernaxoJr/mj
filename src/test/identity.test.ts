@@ -7,6 +7,7 @@ import {
   memberKeysOf,
   SAFETY_EMOJI,
   safetyCode,
+  unconfirmedSeats,
 } from '@/features/lobby/domain/identityHandshake'
 import { openEnvelope, SecureChannel, type InnerMessage } from '@/features/table/application/secureChannel'
 import { FakeStar } from './fakeStar'
@@ -54,6 +55,16 @@ describe('room safety code', () => {
 
     // 少給一家
     expect(checkMembersAgainstRoster(roster, members.slice(0, 2), 1, members[1])).toMatch(/缺少/)
+  })
+})
+
+describe('mandatory safety code confirmation', () => {
+  it('blocks the host until every human guest has confirmed', () => {
+    expect(unconfirmedSeats([0, 1, 3], [])).toEqual([1, 3])
+    expect(unconfirmedSeats([0, 1, 3], [3])).toEqual([1])
+    expect(unconfirmedSeats([0, 1, 3], [1, 3])).toEqual([])
+    // 房主自己按開局即是確認
+    expect(unconfirmedSeats([0], [])).toEqual([])
   })
 })
 
