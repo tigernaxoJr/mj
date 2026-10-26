@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { computed, onUnmounted, reactive, ref } from 'vue'
-import type { ProtocolMessage, RoomSeatSlot, RuleConfig, SeatIndex } from '@/shared/kernel/types'
+import type {
+  PlayerId,
+  ProtocolMessage,
+  RoomMemberKeys,
+  RoomSeatSlot,
+  RuleConfig,
+  SeatIndex,
+} from '@/shared/kernel/types'
+import { createIdentitySeeds, initMahjongWasm, mpIdentityPublic, type MpIdentitySeeds } from '@/shared/wasm'
 import {
   addBotToSeat,
   assignHumanToSeat,
@@ -10,7 +18,16 @@ import {
   isRoomReadyToStart,
   removeBotFromSeat,
 } from '../domain/roomSession'
+import { checkMembersAgainstRoster, identityCommit, memberKeysOf, safetyCode } from '../domain/identityHandshake'
 import { createPeerTransport, type PeerTransportPort } from '../infra/peerAdapter'
+
+/** 兩位以上真人時的身分資料；牌桌用它簽章與加密金鑰分享 */
+export interface MatchSecurity {
+  roomCode: string
+  seeds: MpIdentitySeeds
+  members: RoomMemberKeys[]
+  safetyCode: string[]
+}
 
 export interface StartMatchPayload {
   localSeat: SeatIndex
@@ -18,8 +35,9 @@ export interface StartMatchPayload {
   rules: RuleConfig
   roomSeats: [RoomSeatSlot, RoomSeatSlot, RoomSeatSlot, RoomSeatSlot]
   transport: PeerTransportPort | null
-  /** 客機：觸發開局的首則訊息（房主密鑰承諾），牌桌掛載後交還處理 */
+  /** 客機：觸發開局的首則訊息，牌桌掛載後交還處理 */
   initialMessage?: ProtocolMessage
+  security?: MatchSecurity
 }
 
 const emit = defineEmits<{
@@ -37,6 +55,109 @@ const busy = ref(false)
 const room = reactive(createRoomSession(playerName.value, true))
 let transport: PeerTransportPort | null = null
 let keepTransportOnUnmount = false
+
+// ---- 身分握手（§4.3）：承諾 → 名冊 → 公開 → 各自計算安全碼 ----
+let seeds: MpIdentitySeeds | null = null
+let myKeys: RoomMemberKeys | null = null
+/** 房主：各客機連線送來的承諾 */
+const guestCommits = new Map<PlayerId, string>()
+/** 房主：已公開且對得上承諾的公鑰 */
+const revealed = new Map<SeatIndex, RoomMemberKeys>()
+let roster: (string | null)[] = []
+let members: RoomMemberKeys[] = []
+type Handshake = 'idle' | 'collecting' | 'verify'
+const handshake = ref<Handshake>('idle')
+const safetyEmoji = ref<string[] | null>(null)
+
+async function prepareIdentity(): Promise<void> {
+  await initMahjongWasm()
+  seeds = createIdentitySeeds()
+  myKeys = memberKeysOf(0, mpIdentityPublic(seeds))
+}
+
+function myCommit(): string {
+  return identityCommit(myKeys!.signPub, myKeys!.boxPub)
+}
+
+function humanSeats(): RoomSeatSlot[] {
+  return room.seats.filter((s) => s.occupant === 'human')
+}
+
+function resetHandshake(): void {
+  if (handshake.value !== 'idle' && p2pMode.value === 'hosting') {
+    transport?.broadcast({ type: 'IDENTITY_RESET' })
+  }
+  handshake.value = 'idle'
+  safetyEmoji.value = null
+  revealed.clear()
+  members = []
+}
+
+/** 房主：鎖定名冊（此時尚未看到任何客機公鑰），請各家公開 */
+function beginHandshake(): void {
+  const commits: (string | null)[] = [null, null, null, null]
+  for (const slot of humanSeats()) {
+    const c = slot.seat === 0 ? myCommit() : guestCommits.get(slot.playerId!)
+    if (!c) {
+      errorText.value = `尚未收到 ${slot.name} 的身分，請稍候再按`
+      return
+    }
+    commits[slot.seat] = c
+  }
+  roster = commits
+  revealed.clear()
+  revealed.set(0, { ...myKeys!, seat: 0 })
+  handshake.value = 'collecting'
+  statusText.value = '比對身分中…'
+  transport?.broadcast({ type: 'IDENTITY_ROSTER', roomCode: room.roomCode, commits })
+}
+
+function onGuestReveal(peer: PlayerId, signPub: string, boxPub: string): void {
+  if (handshake.value !== 'collecting') return
+  const slot = room.seats.find((s) => s.playerId === peer && s.occupant === 'human')
+  if (!slot || roster[slot.seat] !== identityCommit(signPub, boxPub)) return
+  revealed.set(slot.seat, { seat: slot.seat, signPub, boxPub })
+  if (humanSeats().every((s) => revealed.has(s.seat))) {
+    members = [...revealed.values()].sort((a, b) => a.seat - b.seat)
+    transport?.broadcast({ type: 'IDENTITY_KEYS', members })
+    safetyEmoji.value = safetyCode(room.roomCode, members)
+    handshake.value = 'verify'
+    statusText.value = '請與每位玩家比對安全碼，一致才開局'
+  }
+}
+
+function guestOnRoster(roomCode: string, commits: (string | null)[]): void {
+  if (!myKeys || roomCode !== room.roomCode || commits[localSeat.value] !== myCommit()) {
+    errorText.value = '房主的名冊沒有你的身分，可能遭冒充，請離開房間'
+    return
+  }
+  roster = commits
+  transport?.sendToHost({ type: 'IDENTITY_REVEAL', signPub: myKeys.signPub, boxPub: myKeys.boxPub })
+}
+
+function guestOnKeys(list: RoomMemberKeys[]): void {
+  if (!myKeys) return
+  const err = checkMembersAgainstRoster(roster, list, localSeat.value, { ...myKeys, seat: localSeat.value })
+  if (err) {
+    errorText.value = `${err}，可能遭冒充，請離開房間`
+    return
+  }
+  members = list
+  safetyEmoji.value = safetyCode(room.roomCode, list)
+  handshake.value = 'verify'
+  statusText.value = '與每位玩家比對安全碼，一致才繼續'
+}
+
+function security(): MatchSecurity | undefined {
+  if (handshake.value !== 'verify' || !seeds || !safetyEmoji.value) return undefined
+  return { roomCode: room.roomCode, seeds, members, safetyCode: safetyEmoji.value }
+}
+
+const startLabel = computed(() => {
+  if (handshake.value === 'collecting') return '比對身分中…'
+  if (handshake.value === 'verify') return '安全碼一致，開局'
+  return '開局'
+})
 
 const windLabels: Record<SeatIndex, string> = { 0: '東', 1: '南', 2: '西', 3: '北' }
 
@@ -138,6 +259,9 @@ async function hostP2PRoom(): Promise<void> {
   busy.value = true
   try {
     transport?.disconnect()
+    await prepareIdentity()
+    guestCommits.clear()
+    resetHandshake()
     transport = createPeerTransport()
     room.seats[0].name = playerName.value.trim() || '房主'
 
@@ -145,17 +269,25 @@ async function hostP2PRoom(): Promise<void> {
       onPeerConnected: (peerSlotId) => {
         const assigned = assignHumanToSeat(room, peerSlotId, `玩家 ${peerSlotId.toUpperCase()}`)
         if (assigned !== null) {
+          resetHandshake()
           statusText.value = `${peerSlotId.toUpperCase()} 已入座 ${windLabels[assigned]}風`
           syncSnapshotToPeers()
         }
       },
-      onPeerMessage: (_peerSlotId, msg: ProtocolMessage) => {
+      onPeerMessage: (peerSlotId, msg: ProtocolMessage) => {
         if (msg.type === 'SEAT_UPDATE') {
           room.seats[msg.seat] = msg.slot
           syncSnapshotToPeers()
+        } else if (msg.type === 'IDENTITY_COMMIT' && typeof msg.commit === 'string') {
+          resetHandshake()
+          guestCommits.set(peerSlotId, msg.commit)
+        } else if (msg.type === 'IDENTITY_REVEAL') {
+          onGuestReveal(peerSlotId, msg.signPub, msg.boxPub)
         }
       },
       onPeerDisconnected: (peerSlotId) => {
+        guestCommits.delete(peerSlotId)
+        resetHandshake()
         handlePlayerDisconnect(room, peerSlotId, false)
         statusText.value = `${peerSlotId.toUpperCase()} 已離線`
         syncSnapshotToPeers()
@@ -186,11 +318,15 @@ async function joinP2PRoom(): Promise<void> {
   busy.value = true
   try {
     transport?.disconnect()
+    await prepareIdentity()
+    resetHandshake()
     transport = createPeerTransport()
     await transport.joinRoom(code, {
       onConnected: () => {
         p2pMode.value = 'joined'
         statusText.value = `已加入房號 ${code}，等待房主開局...`
+        room.roomCode = code
+        transport?.sendToHost({ type: 'IDENTITY_COMMIT', commit: myCommit() })
       },
       onMessage: (msg: ProtocolMessage) => {
         if (msg.type === 'ROOM_SNAPSHOT') {
@@ -199,7 +335,17 @@ async function joinP2PRoom(): Promise<void> {
           room.rules = msg.rules
         } else if (msg.type === 'SEAT_ASSIGNED') {
           localSeat.value = msg.seat
-        } else if (msg.type === 'SEED_COMMIT') {
+        } else if (msg.type === 'IDENTITY_ROSTER') {
+          guestOnRoster(msg.roomCode, msg.commits)
+        } else if (msg.type === 'IDENTITY_KEYS') {
+          guestOnKeys(msg.members)
+        } else if (msg.type === 'IDENTITY_RESET') {
+          resetHandshake()
+          statusText.value = '房間成員變動，等待房主重新比對身分'
+        } else if (msg.type === 'SEED_COMMIT' || msg.type === 'SIGNED') {
+          const sec = security()
+          // 簽章牌局一定要先完成身分比對，否則無從驗證
+          if (msg.type === 'SIGNED' && !sec) return
           keepTransportOnUnmount = true
           // 牌桌掛載前先暫存後續訊息，避免漏接房主的出牌
           transport?.holdMessages()
@@ -210,6 +356,7 @@ async function joinP2PRoom(): Promise<void> {
             rules: { ...room.rules },
             roomSeats: [...room.seats] as [RoomSeatSlot, RoomSeatSlot, RoomSeatSlot, RoomSeatSlot],
             transport,
+            security: sec,
           })
         }
       },
@@ -230,6 +377,15 @@ function handleStartGame(): void {
   if (!isRoomReadyToStart(room)) {
     fillEmptySeatsWithBots(room)
   }
+  // 兩位以上真人：先完成身分握手並比對安全碼
+  if (p2pMode.value === 'hosting' && humanSeats().length >= 2) {
+    if (handshake.value === 'idle') {
+      errorText.value = ''
+      beginHandshake()
+      return
+    }
+    if (handshake.value === 'collecting') return
+  }
   if (p2pMode.value === 'hosting' && transport) {
     transport.lockRoom()
     syncSnapshotToPeers()
@@ -241,6 +397,7 @@ function handleStartGame(): void {
     rules: { ...room.rules },
     roomSeats: [...room.seats] as [RoomSeatSlot, RoomSeatSlot, RoomSeatSlot, RoomSeatSlot],
     transport: p2pMode.value === 'solo' ? null : transport,
+    security: p2pMode.value === 'hosting' ? security() : undefined,
   })
 }
 
@@ -380,7 +537,16 @@ onUnmounted(() => {
         </div>
 
         <div class="mt-3 flex min-h-[72px] short:min-h-[60px] short:mt-2 items-center rounded-2xl border border-white/5 bg-black/20 p-3">
-          <div v-if="tab === 'solo'" class="flex w-full items-center justify-between gap-3">
+          <div v-if="safetyEmoji" class="flex w-full items-center justify-between gap-3" aria-live="polite">
+            <div class="min-w-0">
+              <p class="text-[10px] font-bold tracking-widest text-[var(--muted)]">房間安全碼 · 與每位玩家口頭比對</p>
+              <p class="text-[11px] leading-snug text-[var(--muted)]">四家看到的必須完全相同，不同就是有人被冒充</p>
+            </div>
+            <p class="shrink-0 text-3xl tracking-[0.15em]" role="img" :aria-label="`安全碼 ${safetyEmoji.join(' ')}`">
+              {{ safetyEmoji.join('') }}
+            </p>
+          </div>
+          <div v-else-if="tab === 'solo'" class="flex w-full items-center justify-between gap-3">
             <p class="text-xs leading-relaxed text-[var(--muted)]">與電腦牌友對戰；點座位增減電腦，空位開局時自動補齊。</p>
             <button type="button" class="btn-ghost h-9 shrink-0 rounded-xl px-3 text-xs font-bold" @click="handleFillBots">
               補滿電腦
@@ -448,9 +614,10 @@ onUnmounted(() => {
           v-if="p2pMode !== 'joined' && tab !== 'join'"
           type="button"
           class="btn-brass mt-4 short:mt-3 short:h-12 flex h-14 w-full items-center justify-center rounded-2xl font-serif text-lg font-black tracking-[0.4em] transition active:scale-[0.99]"
+          :disabled="handshake === 'collecting'"
           @click="handleStartGame"
         >
-          開局
+          {{ startLabel }}
         </button>
         <p class="mt-2 truncate text-center text-[11px] text-[var(--faint)]" aria-live="polite">{{ footerNote }}</p>
         </div>

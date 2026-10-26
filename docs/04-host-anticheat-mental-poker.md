@@ -1,6 +1,6 @@
 # 防房主作弊：Mental Poker 牌山協定計畫 (04-host-anticheat-mental-poker.md)
 
-> 狀態：**Phase 5 進行中**。WP-5.1 密碼核心已併入 [`crates/mahjong-core/src/mental_poker.rs`](../crates/mahjong-core/src/mental_poker.rs)，WP-5.2 的 Wasm 綁定與 TS 封裝（`src/shared/wasm/index.ts` 的 `mp*` 函式）已完成；連線協定與牌桌整合（WP-5.3～5.6）尚未開始。
+> 狀態：**Phase 5 進行中**。WP-5.1 密碼核心已併入 [`crates/mahjong-core/src/mental_poker.rs`](../crates/mahjong-core/src/mental_poker.rs)，WP-5.2 的 Wasm 綁定與 TS 封裝（`src/shared/wasm/index.ts` 的 `mp*` 函式）、WP-5.3 的身分握手、安全碼與簽章信封已完成；牌山協定與牌桌整合（WP-5.4～5.6）進行中。
 > 適用範圍：**兩位以上真人**的連線房間。單機與「1 真人 + 3 電腦」維持現行流程。
 
 ---
@@ -67,10 +67,16 @@ hash 只能「鎖住」一個值，不能在看不到內容時對它運算。要
 
 ### 4.3 身分與房間安全碼（大廳階段）
 
-1. 每位玩家進房時產生 `ed25519` 簽章金鑰與 `crypto_box` 金鑰，送出 `IDENTITY_ANNOUNCE`。
-2. 房主在 `ROOM_SNAPSHOT` 中帶上四家公鑰。
-3. 每台裝置**在本機自行計算** **房間安全碼** = `sha256(房號 ‖ 依座位排序的四家公鑰)`（`mental_poker::room_fingerprint`），取前幾個位元組顯示成 4 個 emoji。安全碼本身從不經網路傳送，所以房主無法替任何人「指定」安全碼。
+1. 每位玩家進房時產生 `ed25519` 簽章金鑰與 `crypto_box` 金鑰，但**先只送出承諾** `IDENTITY_COMMIT = sha256(公鑰)`。
+2. 房主按開局時鎖定名冊 `IDENTITY_ROSTER`（四家承諾），之後各家才 `IDENTITY_REVEAL` 公開公鑰；房主驗證後以 `IDENTITY_KEYS` 下發。客機檢查每把公鑰都對得上名冊、自己那把沒被替換。
+3. 每台裝置**在本機自行計算** **房間安全碼** = `sha256(房號 ‖ 依座位排序的四家公鑰)`（`mental_poker::room_fingerprint`），取 24 位元顯示成 4 個 emoji（64 選 1）。安全碼本身從不經網路傳送，所以房主無法替任何人「指定」安全碼。
 4. 玩家開局前口頭或用聊天軟體比對安全碼。若房主對某位客機冒充他人（中間人），兩邊看到的公鑰不同，安全碼就會不一致。
+
+> **為什麼要先承諾**：若直接交換公鑰，房主可在看到真實公鑰後反覆產生假公鑰，直到兩邊的 24 位元安全碼相同（生日攻擊只需約 2¹² 次，瞬間完成）。先鎖定名冊後，房主給每個人看的內容在得知任何真實公鑰前就已固定，冒充成功的機率只剩 2⁻²⁴，而且每次失敗都會被看到。
+>
+> 實作：[`identityHandshake.ts`](../src/features/lobby/domain/identityHandshake.ts)（承諾、名冊檢查、安全碼）、[`LobbyHub.vue`](../src/features/lobby/ui/LobbyHub.vue)（握手流程與顯示）。成員變動時房主送出 `IDENTITY_RESET` 重新比對。
+
+**簽章信封與證據紀錄**（[`secureChannel.ts`](../src/features/table/application/secureChannel.ts)）：開局後所有協定訊息都包成 `SignedEnvelope {seat, n, body, sig}`，簽的是 `twmj/msg/v1|房號|seat|n|body`，`n` 遞增防重放。房主是唯一的排序者：客機訊息送到房主、驗證後**原封不動**轉送給全部客機（含發送者），每台裝置以相同順序套用。每台裝置都保存收到的全部原始信封，可匯出成證據檔，第三方用其中的公鑰即可自行驗簽並重跑稽核，不必相信下載者或房主。
 
 > 安全碼比對是「防房主偷看」的必要前提。不比對時，仍可擋住被動偷看，但擋不住主動冒充的房主。
 
@@ -195,7 +201,7 @@ T = [T₀ … T₁₄₃]                                   # 144 張牌面點�
   - **任務內容**：匯出 WP-5.1 的介面（Wasm 邊界以 `Uint8Array` 傳遞點與純量，上線傳輸用 `bytesToBase64`），並用 `crypto.getRandomValues` 產生本局秘密；補上 Vitest 往返測試（`src/test/mentalPoker.test.ts`）。綁定為無狀態函式，秘密只留在 JS 端。加入密碼函式庫後 `.wasm` 由 206 KB 增為 438 KB（gzip 185 KB）。
   - **驗收指令**：`pnpm test:rust && pnpm test && pnpm build`
 
-- [ ] **WP-5.3：身分、安全碼與簽章信封**
+- [x] **WP-5.3：身分、安全碼與簽章信封**
   - **目標檔案**：`src/shared/kernel/types.ts`、`src/features/lobby/infra/peerAdapter.ts`、`src/features/lobby/ui/LobbyHub.vue`
   - **任務內容**：`IDENTITY_ANNOUNCE`、公鑰隨 `ROOM_SNAPSHOT` 下發、房間安全碼（4 個 emoji）顯示在大廳；所有協定訊息加上簽章，收到時驗證。
   - **驗收指令**：`pnpm test && pnpm build`

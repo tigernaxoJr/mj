@@ -91,8 +91,50 @@ export interface SettlementSummary {
   scoreDeltas: [number, number, number, number]
 }
 
+/** 真人玩家本次連線的公鑰（base64，各 32 bytes） */
+export interface RoomMemberKeys {
+  seat: SeatIndex
+  signPub: string
+  boxPub: string
+}
+
+/**
+ * 簽章信封：`body` 為內層 ProtocolMessage 的 JSON，簽的是
+ * `twmj/msg/v1|房號|seat|n|body`；`n` 為該座位遞增序號，防重放。
+ */
+export interface SignedEnvelope {
+  type: 'SIGNED'
+  seat: SeatIndex
+  n: number
+  body: string
+  sig: string
+}
+
+/** 公開某牌山位置：依層順序附上每一層的逐張鎖（base64） */
+export interface TileRevealProof {
+  wallIndex: number
+  keys: string[]
+}
+
 /** P2P 連線協議訊息 (Co-Seeded Commit-Reveal) */
 export type ProtocolMessage =
+  | SignedEnvelope
+  // --- 身分握手（大廳，未簽章；先承諾再公開，房主無法挑選公鑰去湊安全碼）---
+  | { type: 'IDENTITY_COMMIT'; commit: string }
+  | { type: 'IDENTITY_ROSTER'; roomCode: string; commits: (string | null)[] }
+  | { type: 'IDENTITY_REVEAL'; signPub: string; boxPub: string }
+  | { type: 'IDENTITY_KEYS'; members: RoomMemberKeys[] }
+  | { type: 'IDENTITY_RESET' }
+  // --- Mental Poker 牌山協定（一律包在 SignedEnvelope 內）---
+  | { type: 'ROUND_START'; round: number }
+  | { type: 'DECK_SHUFFLED'; round: number; seat: SeatIndex; deck: string }
+  | { type: 'DECK_REKEYED'; round: number; seat: SeatIndex; deck: string; keyCommits: string }
+  | { type: 'KEY_SHARE'; round: number; from: SeatIndex; to: SeatIndex; wallIndices: number[]; sealed: string[] }
+  /** 位置持有者宣告：`wallIndices` 中哪些是花牌（附金鑰公開），其餘為非花牌 */
+  | { type: 'TILE_RESOLVE'; round: number; seat: SeatIndex; wallIndices: number[]; flowers: TileRevealProof[] }
+  /** 公開動作：附上動作所需公開的牌（打出、吃碰槓所用、胡牌時整手） */
+  | { type: 'SECURE_ACTION'; round: number; seat: SeatIndex; action: PlayerActionCommand; reveals: TileRevealProof[] }
+  | { type: 'ROUND_REVEAL'; round: number; seat: SeatIndex; secret: string }
   | { type: 'ROOM_SNAPSHOT'; roomCode: string; seats: [RoomSeatSlot, RoomSeatSlot, RoomSeatSlot, RoomSeatSlot]; rules: RuleConfig }
   | { type: 'SEAT_UPDATE'; seat: SeatIndex; slot: RoomSeatSlot }
   | { type: 'SEED_COMMIT'; seat: SeatIndex; commitHash: string }
