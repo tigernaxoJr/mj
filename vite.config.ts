@@ -62,6 +62,8 @@ export default defineConfig({
   },
   test: {
     include: ['src/**/*.test.ts'],
+    // 需先 `pnpm build:wasm` 產生 src/shared/wasm/pkg
+    setupFiles: ['src/test/setupWasm.ts'],
   },
   build: {
     chunkSizeWarningLimit: 1800,

@@ -873,10 +873,10 @@ export function decideBotActionForSeat(
       return { type: 'KAKAN', kind: opts.kakanOptions[0].kind }
     }
     if (opts.migiDiscardableTiles.length > 0) {
-      const bestMigiDiscard = chooseBotDiscard(opts.migiDiscardableTiles, false)
+      const bestMigiDiscard = chooseBotDiscard(player.concealed, player.melds, false, opts.migiDiscardableTiles)
       return { type: 'DECLARE_MIGI', discardTileId: bestMigiDiscard }
     }
-    const discardTileId = chooseBotDiscard(player.concealed, player.isMigi)
+    const discardTileId = chooseBotDiscard(player.concealed, player.melds, player.isMigi)
     return { type: 'DISCARD', tileId: discardTileId }
   }
 

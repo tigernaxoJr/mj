@@ -58,6 +58,15 @@ pub fn wasm_waiting_tiles_json(hand_json: &str) -> String {
     serde_json::to_string(&waits).unwrap_or_default()
 }
 
+/// 電腦玩家最佳捨牌；手牌 JSON 無法解析時回傳 -1
+#[wasm_bindgen]
+pub fn wasm_bot_best_discard(hand_json: &str) -> i32 {
+    match serde_json::from_str::<hand::Hand>(hand_json) {
+        Ok(hand) => bot::choose_best_discard(&hand) as i32,
+        Err(_) => -1,
+    }
+}
+
 #[wasm_bindgen]
 pub fn wasm_bot_turn_decision_json(hand_json: &str, is_migi: bool) -> String {
     let Ok(hand) = serde_json::from_str::<hand::Hand>(hand_json) else {
