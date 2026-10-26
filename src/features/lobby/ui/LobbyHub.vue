@@ -18,6 +18,8 @@ export interface StartMatchPayload {
   rules: RuleConfig
   roomSeats: [RoomSeatSlot, RoomSeatSlot, RoomSeatSlot, RoomSeatSlot]
   transport: PeerTransportPort | null
+  /** 客機：房主首局牌山種子（來自 WALL_LOCKED），用來重現相同牌山 */
+  initialRound?: { roundSeed: string; hostSecret: string }
 }
 
 const emit = defineEmits<{
@@ -105,6 +107,12 @@ function syncSnapshotToPeers(): void {
       seats: [...room.seats] as [RoomSeatSlot, RoomSeatSlot, RoomSeatSlot, RoomSeatSlot],
       rules: { ...room.rules },
     })
+    // 客機不知道自己的座位，由房主逐一告知
+    for (const slot of room.seats) {
+      if (slot.occupant === 'human' && slot.playerId && slot.seat !== 0) {
+        transport.sendToPeer(slot.playerId, { type: 'SEAT_ASSIGNED', seat: slot.seat })
+      }
+    }
   }
 }
 
@@ -189,9 +197,14 @@ async function joinP2PRoom(): Promise<void> {
           room.roomCode = msg.roomCode
           room.seats = msg.seats
           room.rules = msg.rules
+        } else if (msg.type === 'SEAT_ASSIGNED') {
+          localSeat.value = msg.seat
         } else if (msg.type === 'WALL_LOCKED') {
           keepTransportOnUnmount = true
+          // 牌桌掛載前先暫存後續訊息，避免漏接房主的出牌
+          transport?.holdMessages()
           emit('startMatch', {
+            initialRound: { roundSeed: msg.roundSeed, hostSecret: msg.hostSecret },
             localSeat: localSeat.value,
             isHost: false,
             rules: { ...room.rules },

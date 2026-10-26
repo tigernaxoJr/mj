@@ -97,7 +97,8 @@ export type ProtocolMessage =
   | { type: 'SEAT_UPDATE'; seat: SeatIndex; slot: RoomSeatSlot }
   | { type: 'SEED_COMMIT'; seat: SeatIndex; commitHash: string }
   | { type: 'SEED_REVEAL'; seat: SeatIndex; seedHex: string }
-  | { type: 'WALL_LOCKED'; roundSeed: string; leafHashes: string[] }
+  | { type: 'SEAT_ASSIGNED'; seat: SeatIndex }
+  | { type: 'WALL_LOCKED'; roundSeed: string; hostSecret: string; leafHashes: string[] }
   | { type: 'TILE_DRAWN_PRIVATE'; wallIndex: number; tileId: TileId; salt: string }
   | { type: 'TILE_DRAWN_PUBLIC'; seat: SeatIndex; wallIndex: number; flowerReveals: TileId[] }
   | { type: 'PLAYER_ACTION'; seat: SeatIndex; action: PlayerActionCommand }

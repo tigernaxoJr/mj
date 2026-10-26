@@ -1,6 +1,7 @@
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import type {
   PlayerActionCommand,
+  PlayerId,
   ProtocolMessage,
   RoomSeatSlot,
   RuleConfig,
@@ -36,6 +37,8 @@ export interface TableSessionOptions {
   rules?: RuleConfig
   roomSeats?: readonly RoomSeatSlot[]
   transport?: PeerTransportPort | null
+  /** 客機：房主首局的牌山種子，用來重現相同牌山 */
+  initialRound?: { roundSeed: string; hostSecret: string }
 }
 
 export function useTableSession(options: TableSessionOptions = {}) {
@@ -189,8 +192,8 @@ export function useTableSession(options: TableSessionOptions = {}) {
       return
     }
 
-    // 真人已宣告 MIGI 聽牌：若不能自摸，自動在短暫延遲後摸切最後一張牌
-    if (activePlayer.isMigi && activeSeat === localSeat.value) {
+    // 真人（含遠端客機）已宣告 MIGI 聽牌：由房主代為在短暫延遲後摸切，客機不會自己送出
+    if (activePlayer.isMigi) {
       const opts = getSelfTurnOptions(state, activeSeat)
       if (!opts.canTsumo && activePlayer.concealed.length > 0) {
         const drawnTile =
@@ -205,21 +208,33 @@ export function useTableSession(options: TableSessionOptions = {}) {
     }
   }
 
+  function playActionSfx(action: PlayerActionCommand, prevHead: number): void {
+    if (action.type === 'DISCARD' || action.type === 'DECLARE_MIGI') {
+      playSfx('discard')
+    } else if (state.headCursor !== prevHead) {
+      playSfx('draw')
+    }
+  }
+
   function dispatchAction(seat: SeatIndex, action: PlayerActionCommand): boolean {
+    // 客機只送出意圖，由房主驗證並廣播後，統一在收到廣播時套用（避免本地與廣播重複套用）
     if (!isHost.value && transport) {
       transport.sendToHost({ type: 'PLAYER_ACTION', seat, action })
+      if (action.type === 'DISCARD' || action.type === 'DECLARE_MIGI') {
+        migiSelectMode.value = false
+        selectedTileId.value = null
+      }
+      return true
     }
 
     const prevHead = state.headCursor
     const ok = applyPlayerAction(state, seat, action)
     if (!ok) return false
 
+    playActionSfx(action, prevHead)
     if (action.type === 'DISCARD' || action.type === 'DECLARE_MIGI') {
-      playSfx('discard')
       migiSelectMode.value = false
       selectedTileId.value = null
-    } else if (state.headCursor !== prevHead) {
-      playSfx('draw')
     }
 
     if (isHost.value && transport) {
@@ -239,7 +254,7 @@ export function useTableSession(options: TableSessionOptions = {}) {
   }
 
   /** P2P 訊息接收與 Commit-Reveal 驗證 */
-  function handleProtocolMessage(msg: ProtocolMessage): void {
+  function handleProtocolMessage(msg: ProtocolMessage, fromPeer?: PlayerId): void {
     switch (msg.type) {
       case 'SEED_COMMIT':
         peerCommits.set(msg.seat, msg.commitHash)
@@ -250,8 +265,12 @@ export function useTableSession(options: TableSessionOptions = {}) {
         }
         break
       case 'WALL_LOCKED':
-        state.roundSeed = msg.roundSeed
-        state.wallLeafHashes = msg.leafHashes
+        // 客機：房主開下一局，以相同種子重現牌山
+        if (!isHost.value && state.phase === 'ROUND_SETTLEMENT') {
+          playSfx('shuffle')
+          prepareNextRound(state, msg.roundSeed, msg.hostSecret)
+          verifyWallLock(msg.leafHashes)
+        }
         break
       case 'TILE_DRAWN_PRIVATE': {
         const expected = state.wallLeafHashes[msg.wallIndex]
@@ -260,10 +279,21 @@ export function useTableSession(options: TableSessionOptions = {}) {
         }
         break
       }
-      case 'PLAYER_ACTION':
-        applyPlayerAction(state, msg.seat, msg.action)
-        scheduleBotStepIfNeeded()
+      case 'PLAYER_ACTION': {
+        if (isHost.value) {
+          // 房主：只接受該客機自己座位的意圖，驗證後經 dispatchAction 套用並廣播
+          const slot = options.roomSeats?.find((s) => s.seat === msg.seat)
+          if (fromPeer && slot?.occupant === 'human' && slot.playerId === fromPeer) {
+            dispatchAction(msg.seat, msg.action)
+          }
+        } else {
+          const prevHead = state.headCursor
+          if (applyPlayerAction(state, msg.seat, msg.action)) {
+            playActionSfx(msg.action, prevHead)
+          }
+        }
         break
+      }
       case 'ROUND_AUDIT': {
         const recomputed = createCommittedWall(state.roundSeed, msg.hostSecret)
         const matches =
@@ -276,16 +306,31 @@ export function useTableSession(options: TableSessionOptions = {}) {
     }
   }
 
+  /** 客機核對房主宣告的牌山承諾；不符則標記為未通過稽核 */
+  function verifyWallLock(leafHashes: string[]): void {
+    state.auditVerified =
+      leafHashes.length === state.wallLeafHashes.length &&
+      leafHashes.every((h, i) => h === state.wallLeafHashes[i])
+  }
+
   async function initAndStartRound(customSeed?: string): Promise<void> {
     await initMahjongWasm()
-    const seed = customSeed ?? `twmj-seed-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    const secret = `host-secret-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const guestRound = !isHost.value ? options.initialRound : undefined
+    const seed =
+      guestRound?.roundSeed ??
+      customSeed ??
+      `twmj-seed-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const secret =
+      guestRound?.hostSecret ?? `host-secret-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     playSfx('shuffle')
     startRound(state, seed, secret)
+    // 牌局已就緒才接管連線訊息，之前的訊息由 transport 暫存
+    transport?.setMessageSink(handleProtocolMessage)
     if (isHost.value && transport) {
       transport.broadcast({
         type: 'WALL_LOCKED',
         roundSeed: state.roundSeed,
+        hostSecret: state.hostSecret,
         leafHashes: state.wallLeafHashes,
       })
     }
@@ -293,6 +338,7 @@ export function useTableSession(options: TableSessionOptions = {}) {
   }
 
   function startNextRound(): void {
+    if (!isHost.value) return
     const seed = `twmj-seed-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     const secret = `host-secret-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     playSfx('shuffle')
@@ -301,6 +347,7 @@ export function useTableSession(options: TableSessionOptions = {}) {
       transport.broadcast({
         type: 'WALL_LOCKED',
         roundSeed: state.roundSeed,
+        hostSecret: state.hostSecret,
         leafHashes: state.wallLeafHashes,
       })
     }
@@ -316,6 +363,7 @@ export function useTableSession(options: TableSessionOptions = {}) {
 
   onUnmounted(() => {
     clearBotTimer()
+    transport?.setMessageSink(null)
   })
 
   return {

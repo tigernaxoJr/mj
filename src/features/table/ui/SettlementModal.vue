@@ -4,9 +4,14 @@ import { kindOf, type SeatIndex, type TileId } from '@/shared/kernel/types'
 import { tileLabel } from '@/shared/wasm'
 import type { TableState } from '../domain/tableState'
 
-const props = defineProps<{
-  state: TableState
-}>()
+const props = withDefaults(
+  defineProps<{
+    state: TableState
+    /** 連線客機不能自行開下一局，須等房主 */
+    canAdvance?: boolean
+  }>(),
+  { canAdvance: true },
+)
 
 const emit = defineEmits<{
   nextRound: []
@@ -203,10 +208,11 @@ function signed(n: number): string {
             </button>
             <button
               type="button"
-              class="btn-brass h-11 flex-[2] rounded-2xl px-6 font-serif text-base font-black tracking-wider sm:flex-none"
+              class="btn-brass h-11 flex-[2] rounded-2xl px-6 font-serif text-base font-black tracking-wider disabled:opacity-60 sm:flex-none"
+              :disabled="!canAdvance"
               @click="emit('nextRound')"
             >
-              下一局 · {{ keepsDealer ? '連莊' : '換莊' }}
+              {{ canAdvance ? `下一局 · ${keepsDealer ? '連莊' : '換莊'}` : '等待房主開下一局...' }}
             </button>
           </div>
         </div>

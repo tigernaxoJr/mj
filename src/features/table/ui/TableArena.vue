@@ -15,6 +15,7 @@ const props = defineProps<{
   rules?: RuleConfig
   roomSeats?: readonly RoomSeatSlot[]
   transport?: PeerTransportPort | null
+  initialRound?: { roundSeed: string; hostSecret: string }
 }>()
 
 const emit = defineEmits<{
@@ -51,6 +52,7 @@ const {
   rules: props.rules,
   roomSeats: props.roomSeats,
   transport: props.transport ?? null,
+  initialRound: props.initialRound,
 })
 
 
@@ -278,6 +280,7 @@ onUnmounted(() => {
     <!-- 結算彈窗 -->
     <SettlementModal
       :state="state"
+      :can-advance="props.isHost ?? true"
       @next-round="startNextRound"
       @back-to-lobby="emit('leaveTable')"
     />

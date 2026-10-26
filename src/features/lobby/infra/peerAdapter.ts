@@ -46,7 +46,14 @@ export interface PeerTransportPort {
   lockRoom(): void
   disconnect(): void
   getSignalingInfo(): SignalingEndpointInfo
+  /** 開始暫存收到的訊息（大廳交棒給牌桌前，避免遺漏） */
+  holdMessages(): void
+  /** 牌桌接管所有後續訊息，並先送出暫存內容；傳入 null 取消接管 */
+  setMessageSink(sink: MessageSink | null): void
 }
+
+/** `fromPeer` 僅房主端有值（客機槽位 id） */
+export type MessageSink = (msg: ProtocolMessage, fromPeer?: PlayerId) => void
 
 export const MAX_REMOTE_PEERS = 3 // 1 Host ('p1') + 最多 3 Guests ('p2', 'p3', 'p4')
 const GUEST_SLOT_IDS: readonly PlayerId[] = ['p2', 'p3', 'p4']
@@ -151,6 +158,34 @@ export class PeerJsAdapter implements PeerTransportPort {
   private isLocked = false
   private resolvedConfig: ResolvedPeerConfig = getPeerConfig()
   private currentSignalingInfo: SignalingEndpointInfo
+  private sink: MessageSink | null = null
+  private holding = false
+  private held: Array<{ msg: ProtocolMessage; from?: PlayerId }> = []
+
+  holdMessages(): void {
+    this.holding = true
+  }
+
+  setMessageSink(sink: MessageSink | null): void {
+    this.sink = sink
+    this.holding = false
+    const pending = this.held
+    this.held = []
+    if (sink) for (const { msg, from } of pending) sink(msg, from)
+  }
+
+  /** 已被牌桌接管或暫存時回傳 true，呼叫端不再走大廳 callback */
+  private route(msg: ProtocolMessage, from?: PlayerId): boolean {
+    if (this.sink) {
+      this.sink(msg, from)
+      return true
+    }
+    if (this.holding) {
+      this.held.push({ msg, from })
+      return true
+    }
+    return false
+  }
 
   constructor() {
     this.currentSignalingInfo = this.resolvedConfig.hasCustomServer
@@ -314,7 +349,9 @@ export class PeerJsAdapter implements PeerTransportPort {
         }
 
         conn.on('data', (data) => {
-          callbacks.onPeerMessage(slotId, data as ProtocolMessage)
+          if (!this.route(data as ProtocolMessage, slotId)) {
+            callbacks.onPeerMessage(slotId, data as ProtocolMessage)
+          }
         })
 
         conn.on('close', () => {
@@ -440,7 +477,9 @@ export class PeerJsAdapter implements PeerTransportPort {
         }
 
         conn.on('data', (data) => {
-          callbacks.onMessage(data as ProtocolMessage)
+          if (!this.route(data as ProtocolMessage)) {
+            callbacks.onMessage(data as ProtocolMessage)
+          }
         })
 
         conn.on('close', () => {
@@ -487,6 +526,9 @@ export class PeerJsAdapter implements PeerTransportPort {
 
   disconnect(): void {
     this.isLocked = false
+    this.sink = null
+    this.holding = false
+    this.held = []
     for (const conn of this.clientConns.values()) {
       conn.close()
     }
