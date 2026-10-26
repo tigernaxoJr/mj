@@ -157,6 +157,9 @@ function signed(n: number): string {
           </ul>
 
           <!-- 四家輸贏 -->
+          <p v-if="settlement.notCounted" class="mt-4 text-[11px] font-bold text-[var(--brass-hi)] short:mt-2">
+            本局曾降級，不計分：以下輸贏僅供參考，未加進累計分數
+          </p>
           <div class="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4 short:mt-3 short:grid-cols-4">
             <div
               v-for="seat in state.seats"
@@ -181,13 +184,14 @@ function signed(n: number): string {
               </div>
               <p
                 class="mt-2 font-serif text-xl font-black tabular-nums sm:text-2xl short:mt-0.5 short:text-lg"
-                :class="
+                :class="[
+                  settlement.notCounted && 'line-through opacity-50',
                   settlement.scoreDeltas[seat.seat] > 0
                     ? 'text-[var(--jade-hi)]'
                     : settlement.scoreDeltas[seat.seat] < 0
                       ? 'text-[#ff9c85]'
-                      : 'text-[var(--faint)]'
-                "
+                      : 'text-[var(--faint)]',
+                ]"
               >
                 {{ signed(settlement.scoreDeltas[seat.seat]) }}
               </p>

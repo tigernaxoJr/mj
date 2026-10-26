@@ -294,12 +294,13 @@ export class SecureTable {
     this.markDeparted(seat, reason, inRound && !settled ? 'degraded' : 'left')
     if (!inRound) return this.opts.onStep(null, null)
     if (settled) {
-      // 已經結算、只差公開秘密：分數照算，但牌山無法完整稽核
+      // 已經結算、只差公開秘密：牌山無法稽核，比照降級不計分（否則房主可擋下別人的秘密來掩蓋作弊）
       this.audited = true
-      this.degradedNote = `${this.state.seats[seat].name}在稽核前離開，本局未完整驗證`
+      this.degradedNote = `${this.state.seats[seat].name}在稽核前離開，本局未完整驗證，不計分`
+      this.uncountRound()
       return this.opts.onStep(null, null)
     }
-    this.degradedNote = `${this.state.seats[seat].name}${reason}，本局防作弊已失效，改由房主發牌`
+    this.degradedNote = `${this.state.seats[seat].name}${reason}，本局防作弊已失效，改由房主發牌（本局不計分）`
     const head = this.state.headCursor
     const tail = this.state.tailCursor
     // 未摸的位置（含已宣告但還沒摸進手牌的）一律回到未知，等重洗後重發
@@ -360,6 +361,17 @@ export class SecureTable {
     // 洗牌階段就降級：還沒配牌，直接由房主發牌開局
     else if (this.projections.length === 0) this.run({ kind: 'start' })
     else this.processQueue()
+  }
+
+  /**
+   * 降級局照打、不計分：把剛加上的輸贏退回。房主能藉著不轉送某人的訊息「製造」降級並看到所有人的牌，
+   * 不計分就讓這麼做沒有好處。各家對同一個結算做同樣的事，公開局面仍一致。
+   */
+  private uncountRound(): void {
+    const st = this.state.settlement
+    if (!st || st.notCounted) return
+    this.state.seats.forEach((p, i) => (p.score -= st.scoreDeltas[i]))
+    st.notCounted = true
   }
 
   private onVoid(seat: SeatIndex, reason: string): void {
@@ -580,8 +592,10 @@ export class SecureTable {
     this.projections.push(publicProjection(this.state))
     this.opts.onStep(step.kind === 'action' ? step.seat : null, step.kind === 'action' ? step.action : null)
     if (this.state.phase === 'ROUND_SETTLEMENT') {
-      if (this.degrade) this.degrade.revealSecret()
-      else this.revealOnce()
+      if (this.degrade) {
+        this.uncountRound()
+        this.degrade.revealSecret()
+      } else this.revealOnce()
     }
     this.processQueue()
   }

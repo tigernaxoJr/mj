@@ -92,6 +92,8 @@ export interface SettlementSummary {
   taiItems: TaiItem[]
   totalTai: number
   scoreDeltas: [number, number, number, number]
+  /** 防作弊牌局曾降級（或稽核前有人離開）：照打、顯示輸贏，但不加進累計分數 */
+  notCounted?: boolean
 }
 
 /** 真人玩家本次連線的公鑰（base64，各 32 bytes） */

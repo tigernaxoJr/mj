@@ -108,7 +108,7 @@
 - 房主以 `DEGRADE {seat, reason}` 宣告（WebRTC 斷線；或協定步驟 15 秒、輪到該真人卻 60 秒毫無動靜）。開啟「斷線即作廢」時改送 `ROUND_VOID`，本局不計分。
 - 留下的真人把暗牌證明加密給房主：`DEGRADE_HAND`；房主以 Co-Seeded Commit-Reveal 重洗未知牌池：`DEGRADE_COMMIT` → `DEGRADE_SEED` → `DEGRADE_WALL {roundSeed, leafHashes, slots}`。
 - 之後房主私下發牌 `DEGRADE_DEAL`，公開的牌以承諾葉節點證明；代打座位拿重洗順序中前 n 張非花牌當新手牌。
-- 結算時 `DEGRADE_REVEAL {secret}`，各家驗證承諾、自己的種子、葉節點與排序規則；結算畫面標示「本局防作弊已失效」。
+- 結算時 `DEGRADE_REVEAL {secret}`，各家驗證承諾、自己的種子、葉節點與排序規則；結算畫面標示「本局防作弊已失效」。降級局照打、**不計分**（顯示輸贏但不加進累計分數）。
 
 ### 4.3 房主權威流程（`Co-Seeded Commit-Reveal`，保留供相容）
 

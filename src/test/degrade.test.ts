@@ -21,6 +21,7 @@ describe('disconnect during a mental poker round (WP-5.6)', () => {
   it('degrades to host dealing, keeps every tile unique, finishes the round and audits the reshuffle', () => {
     const { net, clients, host } = setup([0, 1, 2, 3])
     host.table.startRound()
+    const before = host.state.seats.map((s) => s.score)
     playUntilDiscards(net, clients, 9)
     drop(net, clients, 2)
     net.flush()
@@ -46,16 +47,23 @@ describe('disconnect during a mental poker round (WP-5.6)', () => {
       expect(c.table.audited).toBe(true)
       expect(c.state.settlement).toEqual(host.state.settlement)
     }
-    expect(host.state.seats.reduce((a, s) => a + s.score, 0)).toBe(40000)
+    // 降級局照打、不計分：輸贏照樣算出來顯示，但累計分數不變
+    for (const c of stay) {
+      expect(c.state.settlement?.notCounted).toBe(true)
+      expect(c.state.seats.map((s) => s.score)).toEqual(before)
+    }
 
-    // 下一局只剩三位真人，照常防作弊
+    // 下一局只剩三位真人，照常防作弊、照常計分
     host.table.startRound()
     playRound(net, clients)
     for (const c of stay) {
       expect(c.faults).toEqual([])
       expect(c.table.degradedNote).toBeNull()
       expect(c.state.auditVerified).toBe(true)
+      expect(c.state.settlement?.notCounted).toBeUndefined()
     }
+    const deltas = host.state.settlement!.scoreDeltas
+    expect(host.state.seats.map((s) => s.score)).toEqual(before.map((b, i) => b + deltas[i]))
   })
 
   it('degrades even when a player drops during the shuffle', () => {
