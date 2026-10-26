@@ -23,7 +23,7 @@ function handleLeaveTable(): void {
     :rules="activeMatch.rules"
     :room-seats="activeMatch.roomSeats"
     :transport="activeMatch.transport"
-    :initial-round="activeMatch.initialRound"
+    :initial-message="activeMatch.initialMessage"
     @leave-table="handleLeaveTable"
   />
   <LobbyHub v-else @start-match="handleStartMatch" />

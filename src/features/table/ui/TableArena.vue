@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import Phaser from 'phaser'
-import type { PlayerActionCommand, RoomSeatSlot, RuleConfig, SeatIndex, TileId } from '@/shared/kernel/types'
+import type { PlayerActionCommand, ProtocolMessage, RoomSeatSlot, RuleConfig, SeatIndex, TileId } from '@/shared/kernel/types'
 import { isAudioMuted, setAudioMuted } from '@/features/audio'
 import type { PeerTransportPort } from '@/features/lobby/infra/peerAdapter'
 import { useTableSession } from '../application/useTableSession'
@@ -15,7 +15,7 @@ const props = defineProps<{
   rules?: RuleConfig
   roomSeats?: readonly RoomSeatSlot[]
   transport?: PeerTransportPort | null
-  initialRound?: { roundSeed: string; hostSecret: string }
+  initialMessage?: ProtocolMessage
 }>()
 
 const emit = defineEmits<{
@@ -43,6 +43,7 @@ const {
   visibleCount,
   migiSelectMode,
   selectedTileId,
+  viewSeq,
   initAndStartRound,
   startNextRound,
   dispatchAction,
@@ -52,7 +53,7 @@ const {
   rules: props.rules,
   roomSeats: props.roomSeats,
   transport: props.transport ?? null,
-  initialRound: props.initialRound,
+  initialMessage: props.initialMessage,
 })
 
 
@@ -139,6 +140,7 @@ watch(
     state.headCursor,
     state.tailCursor,
     state.calloutSeq,
+    viewSeq.value,
     selectedTileId.value,
     migiSelectMode.value,
   ],

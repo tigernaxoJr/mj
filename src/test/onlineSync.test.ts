@@ -1,22 +1,31 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PlayerId, ProtocolMessage, RoomSeatSlot, SeatIndex } from '@/shared/kernel/types'
 import type { MessageSink, PeerTransportPort } from '@/features/lobby/infra/peerAdapter'
-import { decideBotActionForSeat } from '@/features/table/domain/tableState'
 import { useTableSession } from '@/features/table/application/useTableSession'
+import { decideBotActionForSeat } from '@/features/table/domain/tableState'
+import { HIDDEN_TILE } from '@/features/table/domain/stateView'
 
 vi.mock('@/features/audio', () => ({ playSfx: () => {} }))
 
+/** 記憶體內的房主 ↔ 客機連線；`tamper` 可在訊息送達前改寫，模擬作弊的房主 */
 class FakeTransport implements Partial<PeerTransportPort> {
   sink: MessageSink | null = null
   peer: FakeTransport | null = null
-  sent: ProtocolMessage[] = []
+  tamper: ((msg: ProtocolMessage) => ProtocolMessage) | null = null
   constructor(private readonly slotId: PlayerId | null) {}
+  private deliver(msg: ProtocolMessage): void {
+    const out = this.tamper ? this.tamper(msg) : msg
+    // 模擬網路序列化：房主與客機不得共用物件參考
+    this.peer?.sink?.(JSON.parse(JSON.stringify(out)) as ProtocolMessage, this.slotId ?? undefined)
+  }
   broadcast(msg: ProtocolMessage): void {
-    this.sent.push(msg)
-    this.peer?.sink?.(msg)
+    this.deliver(msg)
+  }
+  sendToPeer(_slot: PlayerId, msg: ProtocolMessage): void {
+    this.deliver(msg)
   }
   sendToHost(msg: ProtocolMessage): void {
-    this.peer?.sink?.(msg, this.slotId ?? undefined)
+    this.deliver(msg)
   }
   setMessageSink(sink: MessageSink | null): void {
     this.sink = sink
@@ -28,95 +37,142 @@ function slot(seat: SeatIndex, occupant: 'human' | 'bot', playerId: PlayerId): R
   return { seat, wind, occupant, playerId, name: `S${seat}`, ready: true } as RoomSeatSlot
 }
 
-describe('online play sync (host authoritative)', () => {
-  it('guest sees the host discard and the host applies guest actions', async () => {
-    const roomSeats = [
-      slot(0, 'human', 'p1'),
-      slot(1, 'human', 'p2'),
-      slot(2, 'bot', 'bot-2'),
-      slot(3, 'bot', 'bot-3'),
-    ]
-    vi.useFakeTimers()
-    const hostT = new FakeTransport(null)
-    const guestT = new FakeTransport('p2')
-    hostT.peer = guestT
-    guestT.peer = hostT
+const roomSeats = [
+  slot(0, 'human', 'p1'),
+  slot(1, 'human', 'p2'),
+  slot(2, 'bot', 'bot-2'),
+  slot(3, 'bot', 'bot-3'),
+]
 
-    const host = useTableSession({
-      localSeat: 0,
-      isHost: true,
-      roomSeats,
-      transport: hostT as unknown as PeerTransportPort,
-    })
-    await host.initAndStartRound()
-    const lock = hostT.sent.find((m) => m.type === 'WALL_LOCKED')
-    if (lock?.type !== 'WALL_LOCKED') throw new Error('host did not announce the wall')
+/** 建立房主 + 客機，完成 commit → 客機種子 → 洗牌 → 首次視角同步 */
+async function startOnlineRound() {
+  vi.useFakeTimers()
+  const hostT = new FakeTransport(null)
+  const guestT = new FakeTransport('p2')
+  hostT.peer = guestT
+  guestT.peer = hostT
 
-    const guest = useTableSession({
-      localSeat: 1,
-      isHost: false,
-      roomSeats,
-      transport: guestT as unknown as PeerTransportPort,
-      initialRound: { roundSeed: lock.roundSeed, hostSecret: lock.hostSecret },
-    })
-    await guest.initAndStartRound()
-
-    // 同一牌山：莊家手牌一致
-    expect(guest.state.seats[0].concealed).toEqual(host.state.seats[0].concealed)
-    expect(guest.state.currentSeat).toBe(0)
-
-    // 房主出牌 → 客機同步，並輪到下一家
-    const tile = host.state.seats[0].concealed[0]
-    expect(host.dispatchAction(0, { type: 'DISCARD', tileId: tile })).toBe(true)
-    expect(guest.state.seats[0].discards).toEqual(host.state.seats[0].discards)
-    expect(guest.state.phase).toBe(host.state.phase)
-    expect(guest.state.currentSeat).toBe(host.state.currentSeat)
-
-    // 整局對打：房主端的電腦自動出牌，客機（座位 1）以自己的視角送出動作，雙方狀態需始終一致
-    try {
-      for (let i = 0; i < 600 && host.state.phase !== 'ROUND_SETTLEMENT'; i++) {
-        vi.advanceTimersByTime(700)
-        const entry = guest.localClaimEntry.value
-        const myTurn =
-          guest.state.phase === 'TURN_ACTION_OR_DISCARD' && guest.state.currentSeat === 1
-        if (entry || myTurn) {
-          const cmd = decideBotActionForSeat(guest.state, 1)
-          if (cmd) guest.dispatchAction(1, cmd)
-        }
-        const hostTurn =
-          host.state.phase === 'TURN_ACTION_OR_DISCARD' && host.state.currentSeat === 0
-        if (hostTurn || host.localClaimEntry.value) {
-          const cmd = decideBotActionForSeat(host.state, 0)
-          if (cmd) host.dispatchAction(0, cmd)
-        }
-        expect(JSON.stringify(guest.state.seats)).toBe(JSON.stringify(host.state.seats))
-        expect(guest.state.phase).toBe(host.state.phase)
-      }
-    } finally {
-      vi.useRealTimers()
-    }
-    expect(host.state.phase).toBe('ROUND_SETTLEMENT')
-    expect(guest.state.phase).toBe('ROUND_SETTLEMENT')
-    expect(guest.state.settlement).toEqual(host.state.settlement)
+  const host = useTableSession({
+    localSeat: 0,
+    isHost: true,
+    roomSeats,
+    transport: hostT as unknown as PeerTransportPort,
   })
+  // 房主 SEED_COMMIT 送出時客機才存在（對應真實流程：大廳收到後才開牌桌）
+  let guest: ReturnType<typeof useTableSession> | null = null
+  const origBroadcast = hostT.broadcast.bind(hostT)
+  hostT.broadcast = (msg) => {
+    if (msg.type === 'SEED_COMMIT' && !guest) {
+      guest = useTableSession({
+        localSeat: 1,
+        isHost: false,
+        roomSeats,
+        transport: guestT as unknown as PeerTransportPort,
+        initialMessage: JSON.parse(JSON.stringify(msg)) as ProtocolMessage,
+      })
+      void guest.initAndStartRound()
+      return
+    }
+    origBroadcast(msg)
+  }
+  const starting = host.initAndStartRound()
+  await vi.advanceTimersByTimeAsync(0)
+  await starting
+  if (!guest) throw new Error('guest was never created')
+  return { host, guest: guest as ReturnType<typeof useTableSession>, hostT, guestT }
+}
 
+function playToSettlement(
+  host: ReturnType<typeof useTableSession>,
+  guest: ReturnType<typeof useTableSession>,
+  beforeStep?: (i: number) => void,
+): void {
+  for (let i = 0; i < 600 && host.state.phase !== 'ROUND_SETTLEMENT'; i++) {
+    beforeStep?.(i)
+    vi.advanceTimersByTime(700)
+    const myTurn = guest.state.phase === 'TURN_ACTION_OR_DISCARD' && guest.state.currentSeat === 1
+    if (guest.localClaimEntry.value || myTurn) {
+      const cmd = decideBotActionForSeat(guest.state, 1)
+      if (cmd) guest.dispatchAction(1, cmd)
+    }
+    const hostTurn = host.state.phase === 'TURN_ACTION_OR_DISCARD' && host.state.currentSeat === 0
+    if (hostTurn || host.localClaimEntry.value) {
+      const cmd = decideBotActionForSeat(host.state, 0)
+      if (cmd) host.dispatchAction(0, cmd)
+    }
+  }
+}
+
+describe('online play: host-authoritative, hidden hands, committed wall', () => {
   afterEach(() => vi.useRealTimers())
 
-  it('host ignores actions sent for a seat the peer does not own', async () => {
-    const roomSeats = [
-      slot(0, 'human', 'p1'),
-      slot(1, 'human', 'p2'),
-      slot(2, 'bot', 'bot-2'),
-      slot(3, 'bot', 'bot-3'),
-    ]
-    const hostT = new FakeTransport(null)
-    const host = useTableSession({
-      localSeat: 0,
-      isHost: true,
-      roomSeats,
-      transport: hostT as unknown as PeerTransportPort,
+  it('guest sees only their own hand, yet mirrors every public change', async () => {
+    const { host, guest } = await startOnlineRound()
+
+    expect(guest.state.seats[1].concealed).toEqual(host.state.seats[1].concealed)
+    for (const seat of [0, 2, 3] as const) {
+      expect(guest.state.seats[seat].concealed).toHaveLength(host.state.seats[seat].concealed.length)
+      expect(guest.state.seats[seat].concealed.every((t) => t === HIDDEN_TILE)).toBe(true)
+    }
+    expect(guest.state.wallTiles).toHaveLength(0)
+    expect(guest.state.hostSecret).toBe('')
+
+    playToSettlement(host, guest, () => {
+      for (const seat of [0, 2, 3] as const) {
+        if (guest.state.phase === 'ROUND_SETTLEMENT') return
+        expect(guest.state.seats[seat].discards).toEqual(host.state.seats[seat].discards)
+        expect(guest.state.seats[seat].concealed.every((t) => t === HIDDEN_TILE)).toBe(true)
+      }
+      expect(guest.state.currentSeat).toBe(host.state.currentSeat)
     })
-    await host.initAndStartRound()
+
+    expect(guest.state.phase).toBe('ROUND_SETTLEMENT')
+    // 結算後四家手牌公開，且稽核（承諾、牌山、逐步重播）通過
+    expect(guest.state.seats[0].concealed).toEqual(host.state.seats[0].concealed)
+    expect(guest.state.settlement).toEqual(host.state.settlement)
+    expect(guest.state.auditVerified).toBe(true)
+  })
+
+  it('the next round is also committed and audited', async () => {
+    const { host, guest } = await startOnlineRound()
+    playToSettlement(host, guest)
+    expect(guest.state.auditVerified).toBe(true)
+
+    const next = host.startNextRound()
+    await vi.advanceTimersByTimeAsync(0)
+    await next
+    expect(guest.state.phase).not.toBe('ROUND_SETTLEMENT')
+    expect(guest.state.seats[1].concealed).toEqual(host.state.seats[1].concealed)
+
+    playToSettlement(host, guest)
+    expect(guest.state.phase).toBe('ROUND_SETTLEMENT')
+    expect(guest.state.auditVerified).toBe(true)
+  })
+
+  it('detects a host that swaps a wall tile after the wall was committed', async () => {
+    const { host, guest } = await startOnlineRound()
+    playToSettlement(host, guest, (i) => {
+      if (i === 1) {
+        // 開局後偷換牌山：把緊接著要摸的兩張互換
+        const w = host.state.wallTiles
+        const at = host.state.headCursor
+        ;[w[at], w[at + 1]] = [w[at + 1], w[at]]
+      }
+    })
+    expect(guest.state.phase).toBe('ROUND_SETTLEMENT')
+    expect(guest.state.auditVerified).toBe(false)
+  })
+
+  it('detects a host that reveals a different secret than the one it committed to', async () => {
+    const { host, guest, hostT } = await startOnlineRound()
+    hostT.tamper = (msg) =>
+      msg.type === 'ROUND_AUDIT' ? { ...msg, hostSecret: `${msg.hostSecret}x` } : msg
+    playToSettlement(host, guest)
+    expect(guest.state.auditVerified).toBe(false)
+  })
+
+  it('host ignores actions sent for a seat the peer does not own', async () => {
+    const { host } = await startOnlineRound()
     const tile = host.state.seats[0].concealed[0]
     host.handleProtocolMessage(
       { type: 'PLAYER_ACTION', seat: 0, action: { type: 'DISCARD', tileId: tile } },

@@ -98,10 +98,12 @@ export type ProtocolMessage =
   | { type: 'SEED_COMMIT'; seat: SeatIndex; commitHash: string }
   | { type: 'SEED_REVEAL'; seat: SeatIndex; seedHex: string }
   | { type: 'SEAT_ASSIGNED'; seat: SeatIndex }
-  | { type: 'WALL_LOCKED'; roundSeed: string; hostSecret: string; leafHashes: string[] }
+  | { type: 'WALL_LOCKED'; roundSeed: string; hostCommit: string; leafHashes: string[] }
   | { type: 'TILE_DRAWN_PRIVATE'; wallIndex: number; tileId: TileId; salt: string }
   | { type: 'TILE_DRAWN_PUBLIC'; seat: SeatIndex; wallIndex: number; flowerReveals: TileId[] }
   | { type: 'PLAYER_ACTION'; seat: SeatIndex; action: PlayerActionCommand }
+  /** 房主 → 單一客機：該客機視角的牌桌（他家手牌已蓋住）及產生它的動作；`view` 為 TableState */
+  | { type: 'STATE_SYNC'; seq: number; actor: SeatIndex | null; action: PlayerActionCommand | null; view: unknown }
   | { type: 'ROUND_AUDIT'; hostSecret: string; fullWall: TileId[]; salts: string[] }
 
 /** 實體牌轉牌面種類 `0..41` */

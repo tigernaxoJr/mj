@@ -10,13 +10,7 @@ import type {
   TileKind,
 } from '@/shared/kernel/types'
 import { DEFAULT_RULE_CONFIG, kindOf } from '@/shared/kernel/types'
-import {
-  createCommittedWall,
-  getWaitingKinds,
-  initMahjongWasm,
-  sha256Hex,
-  verifyTileLeaf,
-} from '@/shared/wasm'
+import { createCommittedWall, getWaitingKinds, initMahjongWasm, sha256Hex } from '@/shared/wasm'
 import { playSfx } from '@/features/audio'
 import type { PeerTransportPort } from '@/features/lobby/infra/peerAdapter'
 import {
@@ -30,6 +24,7 @@ import {
   type SelfTurnOptions,
   type TableState,
 } from '../domain/tableState'
+import { canonicalJson, maskStateFor } from '../domain/stateView'
 
 export interface TableSessionOptions {
   localSeat?: SeatIndex
@@ -37,8 +32,8 @@ export interface TableSessionOptions {
   rules?: RuleConfig
   roomSeats?: readonly RoomSeatSlot[]
   transport?: PeerTransportPort | null
-  /** 客機：房主首局的牌山種子，用來重現相同牌山 */
-  initialRound?: { roundSeed: string; hostSecret: string }
+  /** 客機：大廳收到、牌桌掛載前已被消耗的首則訊息（房主的開局承諾） */
+  initialMessage?: ProtocolMessage
 }
 
 export function useTableSession(options: TableSessionOptions = {}) {
@@ -54,9 +49,8 @@ export function useTableSession(options: TableSessionOptions = {}) {
   const selectedTileId = ref<TileId | null>(null)
   let botTimer: ReturnType<typeof setTimeout> | null = null
 
-  // Co-Seeded Commit-Reveal 狀態
-  const peerCommits = new Map<SeatIndex, string>()
-  const peerSeeds = new Map<SeatIndex, string>()
+  /** 客機每套用一次房主視角就加一，供畫面重繪 */
+  const viewSeq = ref(0)
 
   const localPlayer = computed(() => state.seats[localSeat.value])
 
@@ -208,16 +202,47 @@ export function useTableSession(options: TableSessionOptions = {}) {
     }
   }
 
-  function playActionSfx(action: PlayerActionCommand, prevHead: number): void {
-    if (action.type === 'DISCARD' || action.type === 'DECLARE_MIGI') {
+  function playActionSfx(action: PlayerActionCommand | null, prevHead: number): void {
+    if (action && (action.type === 'DISCARD' || action.type === 'DECLARE_MIGI')) {
       playSfx('discard')
     } else if (state.headCursor !== prevHead) {
       playSfx('draw')
     }
   }
 
+  // ---- 房主：每個動作之後，把各客機視角的牌桌送出 ----
+  let syncSeq = 0
+
+  function guestSlots(): RoomSeatSlot[] {
+    return (options.roomSeats ?? []).filter(
+      (s) => s.occupant === 'human' && s.playerId !== null && s.seat !== localSeat.value,
+    )
+  }
+
+  function afterStateChange(actor: SeatIndex | null, action: PlayerActionCommand | null): void {
+    if (!isHost.value || !transport) return
+    for (const slot of guestSlots()) {
+      transport.sendToPeer(slot.playerId!, {
+        type: 'STATE_SYNC',
+        seq: syncSeq,
+        actor,
+        action,
+        view: maskStateFor(state, slot.seat),
+      })
+    }
+    syncSeq++
+    if (state.phase === 'ROUND_SETTLEMENT') {
+      transport.broadcast({
+        type: 'ROUND_AUDIT',
+        hostSecret: state.hostSecret,
+        fullWall: state.wallTiles,
+        salts: state.wallSalts,
+      })
+    }
+  }
+
   function dispatchAction(seat: SeatIndex, action: PlayerActionCommand): boolean {
-    // 客機只送出意圖，由房主驗證並廣播後，統一在收到廣播時套用（避免本地與廣播重複套用）
+    // 客機只送出意圖，由房主驗證後套用；結果以 STATE_SYNC 回傳
     if (!isHost.value && transport) {
       transport.sendToHost({ type: 'PLAYER_ACTION', seat, action })
       if (action.type === 'DISCARD' || action.type === 'DECLARE_MIGI') {
@@ -237,121 +262,199 @@ export function useTableSession(options: TableSessionOptions = {}) {
       selectedTileId.value = null
     }
 
-    if (isHost.value && transport) {
-      transport.broadcast({ type: 'PLAYER_ACTION', seat, action })
-      if (state.phase === 'ROUND_SETTLEMENT') {
-        transport.broadcast({
-          type: 'ROUND_AUDIT',
-          hostSecret: state.hostSecret,
-          fullWall: state.wallTiles,
-          salts: state.wallSalts,
-        })
-      }
-    }
-
+    afterStateChange(seat, action)
     scheduleBotStepIfNeeded()
     return true
   }
 
-  /** P2P 訊息接收與 Commit-Reveal 驗證 */
+  // ---- 客機：接收視角、記錄、局末稽核 ----
+  interface LoggedStep {
+    actor: SeatIndex | null
+    action: PlayerActionCommand | null
+    canon: string
+  }
+  let myRoundSeed = ''
+  let hostCommit = ''
+  let wallLock: { roundSeed: string; hostCommit: string; leafHashes: string[] } | null = null
+  let stepLog: LoggedStep[] = []
+  let roundOk = true
+  /** 已通過稽核、推進到上一局結算的完整狀態，供下一局重播的起點 */
+  let shadow: TableState = createInitialTableState(
+    options.rules ?? DEFAULT_RULE_CONFIG,
+    options.roomSeats,
+  )
+
+  function randomHex(bytes = 16): string {
+    const buf = new Uint8Array(bytes)
+    crypto.getRandomValues(buf)
+    return Array.from(buf, (b) => b.toString(16).padStart(2, '0')).join('')
+  }
+
+  function onHostCommit(commit: string): void {
+    hostCommit = commit
+    myRoundSeed = randomHex()
+    wallLock = null
+    stepLog = []
+    roundOk = true
+    transport?.sendToHost({ type: 'SEED_REVEAL', seat: localSeat.value, seedHex: myRoundSeed })
+  }
+
+  function onWallLocked(msg: Extract<ProtocolMessage, { type: 'WALL_LOCKED' }>): void {
+    wallLock = { roundSeed: msg.roundSeed, hostCommit: msg.hostCommit, leafHashes: msg.leafHashes }
+    // 房主承諾必須是開局前公布的那個，且我的種子確實被納入牌山
+    if (
+      msg.hostCommit !== hostCommit ||
+      !msg.roundSeed.split('|').includes(`${localSeat.value}:${myRoundSeed}`)
+    ) {
+      roundOk = false
+    }
+  }
+
+  function onStateSync(msg: Extract<ProtocolMessage, { type: 'STATE_SYNC' }>): void {
+    if (msg.seq === 0) stepLog = []
+    if (msg.seq !== stepLog.length) {
+      roundOk = false
+      return
+    }
+    const prevHead = state.headCursor
+    const view = msg.view as TableState
+    stepLog.push({ actor: msg.actor, action: msg.action, canon: canonicalJson(view) })
+    Object.assign(state, view)
+    state.auditVerified = roundOk
+    playActionSfx(msg.action, prevHead)
+    viewSeq.value++
+  }
+
+  /** 用房主揭露的密鑰還原牌山，逐步重播並與收到的每個視角比對 */
+  function auditRound(msg: Extract<ProtocolMessage, { type: 'ROUND_AUDIT' }>): void {
+    let ok = roundOk && wallLock !== null && stepLog.length > 0
+    if (ok && wallLock) {
+      ok = sha256Hex(msg.hostSecret) === wallLock.hostCommit
+      const wall = createCommittedWall(wallLock.roundSeed, msg.hostSecret)
+      ok =
+        ok &&
+        wall.leafHashes.length === wallLock.leafHashes.length &&
+        wall.leafHashes.every((h, i) => h === wallLock!.leafHashes[i])
+      if (ok) {
+        const replay = JSON.parse(JSON.stringify(shadow)) as TableState
+        if (replay.phase === 'IDLE') startRound(replay, wallLock.roundSeed, msg.hostSecret)
+        else prepareNextRound(replay, wallLock.roundSeed, msg.hostSecret)
+        const mine = localSeat.value
+        ok = canonicalJson(maskStateFor(replay, mine)) === stepLog[0].canon
+        for (let i = 1; ok && i < stepLog.length; i++) {
+          const step = stepLog[i]
+          ok =
+            step.actor !== null &&
+            step.action !== null &&
+            applyPlayerAction(replay, step.actor, step.action) &&
+            canonicalJson(maskStateFor(replay, mine)) === step.canon
+        }
+        if (ok) shadow = replay
+      }
+    }
+    roundOk = ok
+    state.auditVerified = ok
+  }
+
+  /** P2P 訊息接收 */
   function handleProtocolMessage(msg: ProtocolMessage, fromPeer?: PlayerId): void {
     switch (msg.type) {
-      case 'SEED_COMMIT':
-        peerCommits.set(msg.seat, msg.commitHash)
-        break
-      case 'SEED_REVEAL':
-        if (peerCommits.get(msg.seat) === sha256Hex(msg.seedHex)) {
-          peerSeeds.set(msg.seat, msg.seedHex)
+      // 房主：收集各客機的種子
+      case 'SEED_REVEAL': {
+        if (!isHost.value || !pendingSeeds) break
+        const slot = options.roomSeats?.find((s) => s.seat === msg.seat)
+        if (fromPeer && slot?.playerId === fromPeer && typeof msg.seedHex === 'string') {
+          pendingSeeds.set(msg.seat, msg.seedHex.slice(0, 64))
+          if (guestSlots().every((g) => pendingSeeds!.has(g.seat))) seedsReady?.()
         }
+        break
+      }
+      case 'SEED_COMMIT':
+        if (!isHost.value) onHostCommit(msg.commitHash)
         break
       case 'WALL_LOCKED':
-        // 客機：房主開下一局，以相同種子重現牌山
-        if (!isHost.value && state.phase === 'ROUND_SETTLEMENT') {
-          playSfx('shuffle')
-          prepareNextRound(state, msg.roundSeed, msg.hostSecret)
-          verifyWallLock(msg.leafHashes)
-        }
+        if (!isHost.value) onWallLocked(msg)
         break
-      case 'TILE_DRAWN_PRIVATE': {
-        const expected = state.wallLeafHashes[msg.wallIndex]
-        if (expected && !verifyTileLeaf(msg.wallIndex, msg.tileId, msg.salt, expected)) {
-          state.auditVerified = false
-        }
+      case 'STATE_SYNC':
+        if (!isHost.value) onStateSync(msg)
         break
-      }
+      case 'ROUND_AUDIT':
+        if (!isHost.value) auditRound(msg)
+        break
       case 'PLAYER_ACTION': {
-        if (isHost.value) {
-          // 房主：只接受該客機自己座位的意圖，驗證後經 dispatchAction 套用並廣播
-          const slot = options.roomSeats?.find((s) => s.seat === msg.seat)
-          if (fromPeer && slot?.occupant === 'human' && slot.playerId === fromPeer) {
-            dispatchAction(msg.seat, msg.action)
-          }
-        } else {
-          const prevHead = state.headCursor
-          if (applyPlayerAction(state, msg.seat, msg.action)) {
-            playActionSfx(msg.action, prevHead)
-          }
+        // 房主：只接受該客機自己座位的意圖，驗證後經 dispatchAction 套用並同步
+        if (!isHost.value) break
+        const slot = options.roomSeats?.find((s) => s.seat === msg.seat)
+        if (fromPeer && slot?.occupant === 'human' && slot.playerId === fromPeer) {
+          dispatchAction(msg.seat, msg.action)
         }
-        break
-      }
-      case 'ROUND_AUDIT': {
-        const recomputed = createCommittedWall(state.roundSeed, msg.hostSecret)
-        const matches =
-          recomputed.tiles.length === msg.fullWall.length &&
-          recomputed.tiles.every((t, i) => t === msg.fullWall[i]) &&
-          recomputed.leafHashes.every((h, i) => h === state.wallLeafHashes[i])
-        state.auditVerified = matches
         break
       }
     }
   }
 
-  /** 客機核對房主宣告的牌山承諾；不符則標記為未通過稽核 */
-  function verifyWallLock(leafHashes: string[]): void {
-    state.auditVerified =
-      leafHashes.length === state.wallLeafHashes.length &&
-      leafHashes.every((h, i) => h === state.wallLeafHashes[i])
+  // ---- 房主：開局（先公布密鑰承諾，再收客機種子，才洗牌）----
+  let pendingSeeds: Map<SeatIndex, string> | null = null
+  let seedsReady: (() => void) | null = null
+  const SEED_WAIT_MS = 8000
+
+  async function beginRound(first: boolean, customSeed?: string): Promise<void> {
+    const rand = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+    const secret = `host-secret-${rand()}${randomHex(8)}`
+    let roundSeed = customSeed ?? `twmj-seed-${rand()}`
+
+    const guests = guestSlots()
+    if (transport && guests.length > 0) {
+      // 房主在看到任何客機種子「之前」就鎖定密鑰，之後無法依牌序調整
+      pendingSeeds = new Map()
+      const gathered = new Promise<void>((resolve) => {
+        seedsReady = resolve
+        setTimeout(resolve, SEED_WAIT_MS)
+      })
+      transport.broadcast({
+        type: 'SEED_COMMIT',
+        seat: localSeat.value,
+        commitHash: sha256Hex(secret),
+      })
+      await gathered
+      roundSeed = [...pendingSeeds.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([seat, seed]) => `${seat}:${seed}`)
+        .join('|')
+      pendingSeeds = null
+      seedsReady = null
+    }
+
+    playSfx('shuffle')
+    if (first) startRound(state, roundSeed, secret)
+    else prepareNextRound(state, roundSeed, secret)
+    syncSeq = 0
+    if (transport && guests.length > 0) {
+      transport.broadcast({
+        type: 'WALL_LOCKED',
+        roundSeed: state.roundSeed,
+        hostCommit: sha256Hex(secret),
+        leafHashes: state.wallLeafHashes,
+      })
+    }
+    afterStateChange(null, null)
+    scheduleBotStepIfNeeded()
   }
 
   async function initAndStartRound(customSeed?: string): Promise<void> {
     await initMahjongWasm()
-    const guestRound = !isHost.value ? options.initialRound : undefined
-    const seed =
-      guestRound?.roundSeed ??
-      customSeed ??
-      `twmj-seed-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    const secret =
-      guestRound?.hostSecret ?? `host-secret-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    playSfx('shuffle')
-    startRound(state, seed, secret)
-    // 牌局已就緒才接管連線訊息，之前的訊息由 transport 暫存
+    // 牌桌就緒才接管連線訊息，之前的訊息由 transport 暫存
     transport?.setMessageSink(handleProtocolMessage)
-    if (isHost.value && transport) {
-      transport.broadcast({
-        type: 'WALL_LOCKED',
-        roundSeed: state.roundSeed,
-        hostSecret: state.hostSecret,
-        leafHashes: state.wallLeafHashes,
-      })
+    if (isHost.value) {
+      await beginRound(true, customSeed)
+    } else if (options.initialMessage) {
+      handleProtocolMessage(options.initialMessage)
     }
-    scheduleBotStepIfNeeded()
   }
 
-  function startNextRound(): void {
-    if (!isHost.value) return
-    const seed = `twmj-seed-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    const secret = `host-secret-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    playSfx('shuffle')
-    prepareNextRound(state, seed, secret)
-    if (isHost.value && transport) {
-      transport.broadcast({
-        type: 'WALL_LOCKED',
-        roundSeed: state.roundSeed,
-        hostSecret: state.hostSecret,
-        leafHashes: state.wallLeafHashes,
-      })
-    }
-    scheduleBotStepIfNeeded()
+  async function startNextRound(): Promise<void> {
+    if (!isHost.value || state.phase !== 'ROUND_SETTLEMENT') return
+    await beginRound(false)
   }
 
   /** 將斷線玩家座位轉為電腦玩家立即接手 */
@@ -377,6 +480,7 @@ export function useTableSession(options: TableSessionOptions = {}) {
     visibleCount,
     migiSelectMode,
     selectedTileId,
+    viewSeq,
     initAndStartRound,
     startNextRound,
     dispatchAction,
