@@ -6,7 +6,7 @@ import { VitePWA } from 'vite-plugin-pwa'
 import { fileURLToPath, URL } from 'node:url'
 
 export default defineConfig({
-  base: './',
+  base: '/mj/',
   plugins: [
     vue(),
     tailwindcss(),
@@ -19,9 +19,9 @@ export default defineConfig({
         short_name: '16張麻將',
         description: '台灣十六張麻將：單機對電腦或 P2P 連線對戰',
         lang: 'zh-Hant',
-        id: '/',
-        start_url: '/',
-        scope: '/',
+        id: '/mj/',
+        start_url: '/mj/',
+        scope: '/mj/',
         display: 'fullscreen',
         display_override: ['fullscreen', 'standalone'],
         orientation: 'any',
