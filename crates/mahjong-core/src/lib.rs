@@ -1,6 +1,7 @@
 pub mod bot;
 pub mod hand;
 pub mod meld_check;
+pub mod mental_poker;
 pub mod tile;
 pub mod wall;
 pub mod win_check;

@@ -35,3 +35,14 @@
 
 - [x] **WP-4.1：Web Audio 程序化麻將碰撞聲與吃/碰/槓/胡/自摸語音合成**（[`src/features/audio/index.ts`](./src/features/audio/index.ts)）
 - [x] **WP-4.2：吃碰槓胡書法印章粒子特效與鏡頭震動反饋**（[`src/features/table/engine/TableScene.ts`](./src/features/table/engine/TableScene.ts)）
+
+---
+
+## Phase 5：防房主作弊 Mental Poker 牌山協定（規劃中，詳見 [`docs/04-host-anticheat-mental-poker.md`](./docs/04-host-anticheat-mental-poker.md)）
+
+- [x] **WP-5.1：Rust 密碼核心（Ristretto255 可交換加密洗牌、逐張金鑰承諾、稽核、`crypto_box` 金鑰分享）**
+- [ ] **WP-5.2：Wasm 綁定與 TS 封裝**
+- [ ] **WP-5.3：身分、房間安全碼與簽章信封**
+- [ ] **WP-5.4：開局洗牌與摸牌協定**
+- [ ] **WP-5.5：牌桌狀態機去全知化（房主不再知道別人的牌）**
+- [ ] **WP-5.6：斷線降級、UI 與文件**
