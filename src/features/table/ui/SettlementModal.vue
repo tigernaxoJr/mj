@@ -13,8 +13,10 @@ const props = withDefaults(
     auditNote?: string
     /** 防作弊牌局：可下載本機保存的簽章紀錄 */
     canExport?: boolean
+    /** 測試模式全速放行結算彈窗 */
+    fastPaced?: boolean
   }>(),
-  { canAdvance: true, auditStatus: 'ok', auditNote: '', canExport: false },
+  { canAdvance: true, auditStatus: 'ok', auditNote: '', canExport: false, fastPaced: false },
 )
 
 const emit = defineEmits<{
@@ -29,7 +31,30 @@ const tileSrc = (t: TileId) => `assets/tiles/tile_${kindOf(t)}.png`
 const settlement = computed(() => props.state.settlement)
 /** 暫時收起結算單，看牌桌上攤開的四家手牌 */
 const peek = ref(false)
-watch(settlement, () => (peek.value = false))
+/** 胡牌後留給牌桌震動/特效與看牌的遊戲感頓點，頓點結束後才跳出結算單 */
+const isDelayElapsed = ref(props.fastPaced)
+let delayTimer: ReturnType<typeof setTimeout> | null = null
+
+watch(
+  () => props.state.phase === 'ROUND_SETTLEMENT' && !!settlement.value,
+  (isSettle) => {
+    peek.value = false
+    if (delayTimer) clearTimeout(delayTimer)
+    if (isSettle) {
+      if (props.fastPaced) {
+        isDelayElapsed.value = true
+      } else {
+        isDelayElapsed.value = false
+        delayTimer = setTimeout(() => {
+          isDelayElapsed.value = true
+        }, 1100)
+      }
+    } else {
+      isDelayElapsed.value = props.fastPaced
+    }
+  },
+  { immediate: true },
+)
 const winner = computed(() => {
   const s = settlement.value
   return s && s.winnerSeats.length ? props.state.seats[s.winnerSeats[0]] : null
@@ -77,7 +102,7 @@ function signed(n: number): string {
 <template>
   <Transition name="sheet">
     <div
-      v-if="state.phase === 'ROUND_SETTLEMENT' && settlement && !peek"
+      v-if="state.phase === 'ROUND_SETTLEMENT' && settlement && !peek && isDelayElapsed"
       class="fixed inset-0 z-50 flex items-end justify-center bg-black/55 sm:items-center sm:p-5 short:items-center short:p-2"
       role="dialog"
       aria-modal="true"
@@ -250,7 +275,7 @@ function signed(n: number): string {
     </div>
   </Transition>
   <button
-    v-if="state.phase === 'ROUND_SETTLEMENT' && settlement && peek"
+    v-if="state.phase === 'ROUND_SETTLEMENT' && settlement && peek && isDelayElapsed"
     type="button"
     class="btn-brass fixed left-1/2 top-1/2 z-50 h-11 -translate-x-1/2 -translate-y-1/2 rounded-full px-6 font-serif text-sm font-black tracking-wider shadow-2xl"
     @click="peek = false"

@@ -38,6 +38,8 @@ export interface TableSessionOptions {
   initialMessage?: ProtocolMessage
   /** 兩位以上真人且已完成身分握手：改用 Mental Poker 防作弊牌局 */
   security?: SecureTableSecurity
+  /** 測試/AI代理模式：全速放行定時器，不等待動畫與打牌頓點 */
+  fastPaced?: boolean
 }
 
 export type AuditStatus = 'pending' | 'ok' | 'fail' | 'degraded'
@@ -197,6 +199,11 @@ export function useTableSession(options: TableSessionOptions = {}) {
   }
 
   /** 防作弊牌局：本機替自己的座位自動「過」與聽牌後摸切；房主另外代電腦座位出牌 */
+  const isFastPaced = !!options.fastPaced
+  const claimBotDelay = isFastPaced ? 0 : 500
+  const turnBotDelay = isFastPaced ? 0 : 650
+  const migiAutoDelay = isFastPaced ? 0 : 550
+
   function scheduleSecureAuto(): void {
     if (!secure || secure.fault) return
     const mine = (seat: SeatIndex) =>
@@ -211,7 +218,7 @@ export function useTableSession(options: TableSessionOptions = {}) {
           ? decideBotActionForSeat(state, entry.seat)
           : ({ type: 'CLAIM_PASS' } as const)
         if (cmd) dispatchAction(entry.seat, cmd)
-      }, state.seats[entry.seat].isBot ? 320 : 0)
+      }, state.seats[entry.seat].isBot ? claimBotDelay : 0)
       return
     }
     if (state.phase !== 'TURN_ACTION_OR_DISCARD' || !mine(state.currentSeat)) return
@@ -221,10 +228,10 @@ export function useTableSession(options: TableSessionOptions = {}) {
       botTimer = setTimeout(() => {
         const cmd = decideBotActionForSeat(state, seat)
         if (cmd) dispatchAction(seat, cmd)
-      }, 420)
+      }, turnBotDelay)
     } else if (player.isMigi && !getSelfTurnOptions(state, seat).canTsumo) {
       const drawn = state.lastDrawnTile?.seat === seat ? state.lastDrawnTile.tileId : null
-      if (drawn !== null) botTimer = setTimeout(() => dispatchAction(seat, { type: 'DISCARD', tileId: drawn }), 550)
+      if (drawn !== null) botTimer = setTimeout(() => dispatchAction(seat, { type: 'DISCARD', tileId: drawn }), migiAutoDelay)
     }
   }
 
@@ -245,7 +252,7 @@ export function useTableSession(options: TableSessionOptions = {}) {
           if (cmd) {
             dispatchAction(pendingBot.seat, cmd)
           }
-        }, 320)
+        }, claimBotDelay)
       }
       return
     }
@@ -259,7 +266,7 @@ export function useTableSession(options: TableSessionOptions = {}) {
         if (cmd) {
           dispatchAction(activeSeat, cmd)
         }
-      }, 420)
+      }, turnBotDelay)
       return
     }
 
@@ -274,7 +281,7 @@ export function useTableSession(options: TableSessionOptions = {}) {
           if (state.phase === 'TURN_ACTION_OR_DISCARD' && state.currentSeat === activeSeat) {
             dispatchAction(activeSeat, { type: 'DISCARD', tileId: drawnTile })
           }
-        }, 550)
+        }, migiAutoDelay)
       }
     }
   }
