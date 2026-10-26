@@ -1,14 +1,42 @@
 @import 'tailwindcss';
 
+/*
+ * 視覺系統「朱漆黃銅」：酒紅絨布牌桌 + 胡桃木邊框 + 黃銅描邊。
+ * 綠色牌背在暖色桌面上最醒目；朱砂只留給「胡／自摸」與警示，玉綠標示「輪到你」。
+ */
 :root {
-  --felt-in: #25466c;
-  --felt-out: #0a1626;
-  --ink: #0b1729;
-  --line: #3d5a80;
-  --accent: #f0533a;
-  --gold: #e9c46a;
-  --ivory: #f4ecdc;
-  --muted: #8fa3bf;
+  --wood-deep: #120b08;
+  --wood: #1f140e;
+  --wood-hi: #3a2618;
+  --felt-in: #7a2a35;
+  --felt-out: #2b0c13;
+  --ink: #140d0a;
+  --panel: rgba(24, 15, 11, 0.86);
+  --panel-solid: #1b120d;
+  --line: rgba(212, 166, 74, 0.22);
+  --line-strong: rgba(212, 166, 74, 0.55);
+  --brass: #d4a64a;
+  --brass-hi: #f1d38a;
+  --brass-lo: #8c6a26;
+  --ivory: #f3e9d2;
+  --muted: #b5a48a;
+  --faint: #7d6d58;
+  --jade: #3fae82;
+  --jade-hi: #7fe0b4;
+  --cinnabar: #e0482f;
+  --cinnabar-hi: #ff7a5c;
+  --azure: #4a7fd6;
+
+  --font-sans: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  --font-serif: 'Noto Serif TC', 'Songti TC', 'PMingLiU', serif;
+}
+
+/* 矮橫式手機（如 844×390）：大廳與結算改為左右兩欄 */
+@custom-variant short (@media (orientation: landscape) and (max-height: 520px) and (max-width: 1023px));
+
+@theme {
+  --font-sans: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  --font-serif: 'Noto Serif TC', 'Songti TC', 'PMingLiU', serif;
 }
 
 html,
@@ -21,25 +49,104 @@ body,
   overflow: hidden;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
-  background-color: var(--felt-out);
+  background-color: var(--wood-deep);
   color: var(--ivory);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  font-family: var(--font-sans);
   user-select: none;
   -webkit-user-select: none;
 }
 
-.glass {
-  background: rgba(11, 23, 41, 0.75);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+:focus-visible {
+  outline: 2px solid var(--brass-hi);
+  outline-offset: 2px;
 }
 
-.glass-card {
-  background: rgba(16, 30, 52, 0.85);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(233, 196, 106, 0.25);
-  box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.5);
+/* 牌桌外的木紋背景（大廳、結算） */
+.wood-bg {
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(122, 42, 53, 0.55), transparent 60%),
+    radial-gradient(90% 70% at 50% 110%, rgba(63, 174, 130, 0.12), transparent 60%),
+    repeating-linear-gradient(92deg, rgba(255, 255, 255, 0.012) 0 2px, transparent 2px 9px),
+    linear-gradient(180deg, var(--wood) 0%, var(--wood-deep) 100%);
+}
+
+/* 黃銅描邊面板 */
+.panel {
+  background: linear-gradient(180deg, rgba(36, 23, 16, 0.92), rgba(20, 13, 10, 0.94));
+  border: 1px solid var(--line);
+  box-shadow:
+    inset 0 1px 0 rgba(241, 211, 138, 0.08),
+    0 18px 50px -12px rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+/* 疊在牌桌上的小型浮層 */
+.chip {
+  background: rgba(18, 11, 8, 0.78);
+  border: 1px solid rgba(212, 166, 74, 0.2);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 6px 20px -6px rgba(0, 0, 0, 0.6);
+}
+
+.brass-text {
+  background: linear-gradient(180deg, var(--brass-hi), var(--brass) 55%, var(--brass-lo));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.btn-brass {
+  background: linear-gradient(180deg, var(--brass-hi), var(--brass) 50%, #b8892f);
+  color: #2a1a07;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 8px 22px -8px rgba(212, 166, 74, 0.7);
+}
+.btn-brass:hover:not(:disabled) {
+  filter: brightness(1.07);
+}
+
+.btn-ghost {
+  background: rgba(243, 233, 210, 0.05);
+  border: 1px solid rgba(243, 233, 210, 0.12);
+  color: var(--ivory);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: rgba(243, 233, 210, 0.1);
+}
+
+.field {
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(243, 233, 210, 0.12);
+  color: var(--ivory);
+}
+.field:focus {
+  outline: none;
+  border-color: var(--brass);
+  box-shadow: 0 0 0 3px rgba(212, 166, 74, 0.18);
+}
+.field::placeholder {
+  color: var(--faint);
+}
+
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(212, 166, 74, 0.3) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

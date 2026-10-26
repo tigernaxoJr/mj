@@ -196,7 +196,7 @@ fn add_situational_tai(items: &mut Vec<TaiItem>, ctx: &WinContext, is_menzen: bo
         });
     } else if ctx.is_migi {
         items.push(TaiItem {
-            name: "聽牌（MIGI）".to_string(),
+            name: "聽牌".to_string(),
             tai: 2,
         });
     }

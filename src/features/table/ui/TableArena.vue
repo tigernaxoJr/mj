@@ -24,8 +24,12 @@ const emit = defineEmits<{
 const canvasHost = ref<HTMLDivElement | null>(null)
 const muted = ref(isAudioMuted())
 const handZoneHeight = ref(120)
+/** 橫式時他家直列所佔的左右寬度，操作列避開不遮牌 */
+const hudSideInset = ref(0)
 let game: Phaser.Game | null = null
 let tableScene: TableScene | null = null
+let resizeObserver: ResizeObserver | null = null
+let applyCanvasSize: (() => void) | null = null
 
 const {
   state,
@@ -108,6 +112,19 @@ function onHudAction(cmd: PlayerActionCommand): void {
   syncScene()
 }
 
+/** 離開需點兩次，避免對局中誤觸 */
+const confirmLeave = ref(false)
+let confirmTimer: ReturnType<typeof setTimeout> | null = null
+function requestLeave(): void {
+  if (confirmLeave.value || state.phase === 'ROUND_SETTLEMENT') {
+    emit('leaveTable')
+    return
+  }
+  confirmLeave.value = true
+  if (confirmTimer) clearTimeout(confirmTimer)
+  confirmTimer = setTimeout(() => (confirmLeave.value = false), 2500)
+}
+
 function toggleMute(): void {
   muted.value = !muted.value
   setAudioMuted(muted.value)
@@ -135,28 +152,55 @@ onMounted(async () => {
     tableScene.bindCallbacks({
       onSelectTile,
       onDiscardTile,
-      onLayout: (cssH) => {
+      onLayout: (cssH, portrait, sideCss) => {
         handZoneHeight.value = cssH
+        hudSideInset.value = portrait ? 0 : Math.round(sideCss)
       },
     })
+    // 畫布以裝置像素建立、zoom = 1/DPR 縮回 CSS 尺寸，手機高 DPR 下牌面仍清晰。
+    // DPR 只在這裡讀取並同步給場景；瀏覽器縮放或換螢幕時一併更新 zoom 與畫布尺寸。
+    const host = canvasHost.value
+    const readDpr = () => Math.min(window.devicePixelRatio || 1, 2)
+    let dpr = readDpr()
+    const cssW = () => host.clientWidth || window.innerWidth
+    const cssH = () => host.clientHeight || window.innerHeight
+    tableScene.setDpr(dpr)
     game = new Phaser.Game({
       type: Phaser.AUTO,
-      parent: canvasHost.value,
-      width: canvasHost.value.clientWidth || window.innerWidth,
-      height: canvasHost.value.clientHeight || window.innerHeight,
-      backgroundColor: '#0a1626',
+      parent: host,
+      width: Math.round(cssW() * dpr),
+      height: Math.round(cssH() * dpr),
+      backgroundColor: '#120b08',
       scale: {
-        mode: Phaser.Scale.RESIZE,
-        autoCenter: Phaser.Scale.CENTER_BOTH,
+        mode: Phaser.Scale.NONE,
+        zoom: 1 / dpr,
       },
       scene: [tableScene],
     })
+    applyCanvasSize = () => {
+      if (!game || !tableScene) return
+      const next = readDpr()
+      const dprChanged = next !== dpr
+      dpr = next
+      tableScene.setDpr(dpr)
+      // 先改尺寸再改 zoom：Phaser 在 zoom=1 時 resize() 不會回寫 style，順序顛倒會殘留舊的 CSS 尺寸
+      game.scale.resize(Math.round(cssW() * dpr), Math.round(cssH() * dpr))
+      if (dprChanged) game.scale.setZoom(1 / dpr)
+      game.canvas.style.width = `${cssW()}px`
+      game.canvas.style.height = `${cssH()}px`
+    }
+    resizeObserver = new ResizeObserver(() => applyCanvasSize?.())
+    window.addEventListener('resize', applyCanvasSize)
+    resizeObserver.observe(host)
   }
   await initAndStartRound()
   syncScene()
 })
 
 onUnmounted(() => {
+  if (confirmTimer) clearTimeout(confirmTimer)
+  resizeObserver?.disconnect()
+  if (applyCanvasSize) window.removeEventListener('resize', applyCanvasSize)
   if (game) {
     game.destroy(true)
     game = null
@@ -166,34 +210,46 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="fixed inset-0 h-[100dvh] w-full overflow-hidden select-none" style="background-color: var(--felt-out)">
+  <div class="fixed inset-0 h-[100dvh] w-full overflow-hidden select-none" style="background-color: var(--wood-deep)">
     <!-- Phaser 3 渲染畫布 -->
     <div ref="canvasHost" class="absolute inset-0 h-full w-full" />
 
-    <!-- 頂部資訊列：精簡優雅，不搶視覺 -->
-    <header class="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-between px-3 py-2 sm:px-5 sm:py-3">
-      <div class="glass pointer-events-auto flex items-center gap-2 rounded-2xl px-3 py-1.5 text-xs text-[var(--ivory)]">
-        <span class="font-black text-[var(--gold)]">台灣 16 張</span>
-        <span class="text-white/20">|</span>
-        <span class="text-[var(--muted)]">底 {{ state.rules.basePoints }} / 台 {{ state.rules.taiPoints }}</span>
+    <!-- 頂部資訊列：貼齊木框角落，不遮牌 -->
+    <header
+      class="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between px-3 pt-[max(0.6rem,env(safe-area-inset-top))] sm:px-5 sm:pt-4"
+    >
+      <div class="chip pointer-events-auto flex h-9 items-center gap-2 rounded-full pl-1.5 pr-3.5 text-xs">
+        <span class="grid size-6 place-items-center rounded-full bg-[var(--cinnabar)] font-serif text-[11px] font-black text-white">16</span>
+        <span class="hidden font-serif font-black tracking-wider text-[var(--brass-hi)] sm:inline">台灣十六張</span>
+        <span class="hidden h-3 w-px bg-white/15 sm:inline-block" />
+        <span class="font-bold tabular-nums text-[var(--muted)]">{{ state.rules.basePoints }}/{{ state.rules.taiPoints }}</span>
+        <span v-if="transport" class="size-1.5 rounded-full bg-[var(--jade)]" title="P2P 連線中" />
       </div>
 
-      <!-- 右側按鈕群 -->
       <div class="pointer-events-auto flex items-center gap-2">
         <button
           type="button"
-          class="glass flex size-8 items-center justify-center rounded-xl text-sm transition hover:bg-white/10 active:scale-95 cursor-pointer"
-          :title="muted ? '開啟聲音' : '靜音'"
+          class="chip grid size-9 place-items-center rounded-full text-[var(--ivory)] transition hover:text-[var(--brass-hi)] active:scale-95"
+          :aria-label="muted ? '開啟聲音' : '靜音'"
+          :aria-pressed="muted"
           @click="toggleMute"
         >
-          {{ muted ? '🔇' : '🔊' }}
+          <svg viewBox="0 0 24 24" class="size-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M11 5 6 9H3v6h3l5 4V5z" />
+            <template v-if="muted"><path d="m22 9-6 6" /><path d="m16 9 6 6" /></template>
+            <template v-else><path d="M15.5 8.5a5 5 0 0 1 0 7" /><path d="M18.5 5.5a9 9 0 0 1 0 13" /></template>
+          </svg>
         </button>
         <button
           type="button"
-          class="glass flex h-8 items-center rounded-xl px-3 text-xs font-semibold text-rose-300 transition hover:bg-rose-950/60 active:scale-95 cursor-pointer"
-          @click="emit('leaveTable')"
+          class="chip flex h-9 items-center gap-1.5 rounded-full px-3.5 text-xs font-bold transition active:scale-95"
+          :class="confirmLeave ? 'border-[var(--cinnabar)]! bg-[var(--cinnabar)]! text-white' : 'text-[var(--muted)] hover:text-[var(--ivory)]'"
+          @click="requestLeave"
         >
-          離開
+          <svg viewBox="0 0 24 24" class="size-3.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" /><path d="M10 17 5 12l5-5" /><path d="M5 12h11" />
+          </svg>
+          {{ confirmLeave ? '確定離開？' : '離開' }}
         </button>
       </div>
     </header>
@@ -201,7 +257,7 @@ onUnmounted(() => {
     <!-- 浮動操作層：動態根據手牌實際高度貼合定位 -->
     <footer
       class="pointer-events-none absolute inset-x-0 z-30 transition-all duration-200"
-      :style="{ bottom: `${handZoneHeight + 6}px` }"
+      :style="{ bottom: `${handZoneHeight + 6}px`, paddingLeft: `${hudSideInset}px`, paddingRight: `${hudSideInset}px` }"
     >
       <ActionHud
         :is-my-turn="state.phase === 'TURN_ACTION_OR_DISCARD' && state.currentSeat === localSeat"

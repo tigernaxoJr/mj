@@ -501,7 +501,7 @@ export function evaluateTaiwanWin(input: EvaluateWinInput): {
   else if (input.isRenhou) items.push({ name: '人胡', tai: 8 })
 
   if (input.isTenhouMigi) items.push({ name: '天聽', tai: 8 })
-  else if (input.isMigi) items.push({ name: '聽牌（MIGI）', tai: 2 })
+  else if (input.isMigi) items.push({ name: '聽牌', tai: 2 })
 
   if (isMenzen && input.isTsumo) {
     items.push({ name: '門清一摸三', tai: 3 })
