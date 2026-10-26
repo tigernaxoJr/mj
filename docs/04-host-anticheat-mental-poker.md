@@ -1,6 +1,6 @@
 # 防房主作弊：Mental Poker 牌山協定計畫 (04-host-anticheat-mental-poker.md)
 
-> 狀態：**Phase 5 進行中**。WP-5.1 密碼核心已併入 [`crates/mahjong-core/src/mental_poker.rs`](../crates/mahjong-core/src/mental_poker.rs)，WP-5.2 的 Wasm 綁定與 TS 封裝（`src/shared/wasm/index.ts` 的 `mp*` 函式）、WP-5.3 的身分握手、安全碼與簽章信封已完成；牌山協定與牌桌整合（WP-5.4～5.6）進行中。
+> 狀態：**Phase 5 進行中**。WP-5.1～5.5 已完成：密碼核心（[`mental_poker.rs`](../crates/mahjong-core/src/mental_poker.rs)）、Wasm 綁定、身分握手與安全碼、簽章信封、牌山協定、去全知化的牌桌與結算重播稽核。剩 WP-5.6（斷線降級、證據下載 UI、兩個瀏覽器打完一局的實機驗收）。
 > 適用範圍：**兩位以上真人**的連線房間。單機與「1 真人 + 3 電腦」維持現行流程。
 
 ---
@@ -95,25 +95,32 @@ T = [T₀ … T₁₄₃]                                   # 144 張牌面點�
 
 ### 4.5 摸牌（含配牌、補花、嶺上）
 
-1. 誰摸哪個牌山位置由**公開狀態**決定（`headCursor` / `tailCursor`），每家都算得出來。
-2. 輪到座位 d 摸位置 i 時，其他每位真人自動以 `crypto_box` 把 `k_{p,i}` 封裝給 d，經房主轉送（`KEY_SHARE`）。
+1. 誰摸哪個牌山位置由**公開狀態**決定（`headCursor` / `tailCursor`），每家都算得出來。實作上，規則引擎讀到尚未宣告的位置（`WALL_UNKNOWN`）就丟出 `WallPending {位置, 摸牌座位}`，每台裝置都在同一步遇到同一組位置。
+2. 輪到座位 d 摸位置 i 時，其他每位真人自動以 `crypto_box` 把 `k_{p,i}` 封裝給 d（電腦座位則封給房主），經房主轉送（`KEY_SHARE`）。
 3. d 先比對每份分享與承諾 `hash(k_{p,i})` 是否相符，不符就**立即**知道是誰送錯；再用自己的 `k_{d,i}` 一起開鎖，查表得到牌。
-4. 開局配牌時把每位玩家的 16 個位置**批次**打包成一則訊息，避免 64 次往返。
+4. d 送出 `TILE_RESOLVE`：花牌附上全部金鑰公開（補花是公開動作），其餘位置只宣告「不是花」。各家把該位置記為「不明牌」佔位（`hiddenTileAt(i)`，負值），然後重跑同一步。
+5. 開局配牌時 65 個位置**批次**處理：每家一則 `KEY_SHARE`、每位持有者一則 `TILE_RESOLVE`。
 
 ### 4.6 公開牌（打出、亮花、吃碰槓）
 
-- 打出或亮花：持有者廣播 `TILE_REVEAL {wallIndex, keys: 所有層的 k_{·,i}}`。每家都能驗證承諾並開鎖，確認牌確實是該位置的牌。
-- 吃、碰、明槓：宣告者同時公開所用手牌的位置與金鑰。房主（以及每位玩家）可以即時驗證。
-- 暗槓：牌面保持蓋著，記錄所用的位置，到結算時再驗證。
+所有動作都是 `SECURE_ACTION {seat, action, reveals}`，`reveals` 為 `{wallIndex, keys: 所有層的 k_{·,i}}`。每家驗證承諾並開鎖，把該座位手牌中的佔位換成真牌，再套用動作：
+
+- 打出、宣告聽牌：公開打出的那張。
+- 吃、碰、明槓：公開所用的手牌；各家依公開的牌重算選項後驗證。
+- 暗槓、加槓：公開所用的牌（與現行一樣，暗槓的牌對其他人可見，畫面上兩張蓋著）。
+- 自摸、胡：公開整手。
+
+**回應窗一律開給三家**：因為沒人知道別家手牌，每次打牌後其餘三家都要回應；沒得吃碰胡的一方由本機自動送出「過」，畫面不會出現操作鈕。宣告聽牌時別家無法驗證是否真的聽牌，留到結算重播。
 
 ### 4.7 胡牌與結算稽核
 
 1. 胡牌或流局時，每位真人廣播 `ROUND_REVEAL {seat, secret}`。
+   牌局中途發現任何違規（送錯金鑰、公開無效的牌、輪到他卻送出不合法的動作）時，本局立即作廢並提早公開秘密；別家收到秘密也會跟著公開，大家一起稽核，找出根本原因（例如洗牌時複製了某張牌，表面症狀可能出現在別家）。
 2. 每家從秘密推導出所有金鑰，然後：
    - 驗證每一輪洗牌：輸出是 `k_p · 輸入` 的一個排列（集合相等）。
    - 驗證每一輪換鑰：逐位置相等。
-   - 解出完整牌山，**用現有規則引擎從頭重播整局**，並逐步比對公開狀態（沿用現行的 replay 稽核）。過水、詐胡、藏花都會在這一步抓到。
-3. 稽核失敗時要指出**是哪個座位、哪一步**，並顯示在 `SettlementModal`。
+   - 解出完整牌山，**用現有規則引擎從頭重播整局**，逐步比對「公開投影」（[`secureAudit.ts`](../src/features/table/domain/secureAudit.ts)：張數、牌海、副露、花、游標、回應狀態、結算）。過水、詐胡、藏花、假聽牌都會在這一步抓到。
+3. 稽核失敗時指出**是哪個座位、哪一步**，顯示在 `SettlementModal`；牌局中途作廢時牌桌上方也會出現提示。
 
 ### 4.8 斷線與拒絕合作
 
@@ -134,25 +141,34 @@ T = [T₀ … T₁₄₃]                                   # 144 張牌面點�
 
 ### 4.9 協定訊息草案（`src/shared/kernel/types.ts`）
 
+身分握手（大廳，未簽章）：`IDENTITY_COMMIT`、`IDENTITY_ROSTER`、`IDENTITY_REVEAL`、`IDENTITY_KEYS`、`IDENTITY_RESET`（§4.3）。
+
+牌局訊息一律包在 `SignedEnvelope {seat, n, body, sig}` 內：
+
 ```ts
-| { type: 'IDENTITY_ANNOUNCE'; seat: SeatIndex; signPub: string; boxPub: string }
-| { type: 'DECK_SHUFFLED'; round: number; seat: SeatIndex; deck: string /* 144 × 32 bytes, base64 */; sig: string }
-| { type: 'DECK_REKEYED'; round: number; seat: SeatIndex; deck: string; keyCommits: string; sig: string }
-| { type: 'KEY_SHARE'; round: number; from: SeatIndex; to: SeatIndex; wallIndices: number[]; sealed: string[]; sig: string }
-| { type: 'TILE_REVEAL'; round: number; seat: SeatIndex; wallIndex: number; keys: string[]; sig: string }
-| { type: 'ROUND_REVEAL'; round: number; seat: SeatIndex; secret: string; sig: string }
+| { type: 'ROUND_START'; round: number }                                     // 只有房主
+| { type: 'DECK_SHUFFLED'; round: number; seat: SeatIndex; deck: string /* 144 × 32 bytes, base64 */ }
+| { type: 'DECK_REKEYED'; round: number; seat: SeatIndex; deck: string; keyCommits: string }
+| { type: 'KEY_SHARE'; round: number; from: SeatIndex; to: SeatIndex; wallIndices: number[]; sealed: string[] }
+| { type: 'TILE_RESOLVE'; round: number; seat: SeatIndex; wallIndices: number[]; flowers: TileRevealProof[] }
+| { type: 'SECURE_ACTION'; round: number; seat: SeatIndex; action: PlayerActionCommand; reveals: TileRevealProof[] }
+| { type: 'ROUND_REVEAL'; round: number; seat: SeatIndex; secret: string }
 ```
+
+實作：[`deckProtocol.ts`](../src/features/table/application/deckProtocol.ts)（洗牌、換鑰、金鑰分享、宣告、稽核）、[`secureTable.ts`](../src/features/table/application/secureTable.ts)（本機牌局流程）、[`useTableSession.ts`](../src/features/table/application/useTableSession.ts)（自動過、電腦座位、UI）。
 
 每副牌山約 4.6 KB，WebRTC DataChannel 一則訊息就能送完。
 
 ## 5. 對牌桌狀態機的影響
 
-這是最大的改動。目前房主持有完整的 `TableState`，並對每位客機送出遮蔽後的視角。改動後：
+兩位以上真人的房間不再由房主送出各家視角（`STATE_SYNC`），而是每台裝置用自己看得到的資訊跑同一套規則引擎（`TableState.openClaims = true`）：
 
-- **所有人（包括房主）的狀態都是部分資訊**：別家的暗牌只有「張數 + 牌山位置」，沒有牌面。
-- **吃、碰、槓、胡的選項由各家在本機計算**；房主只收集宣告，再用 §4.6 的公開金鑰驗證。
-- **只能事後驗證的動作**（暗槓、自摸前的手牌、過水）一律延到 §4.7 的重播稽核。
-- `TILE_DRAWN_PRIVATE`、`STATE_SYNC` 的語意改為「公開狀態 + 位置」，不再由房主告訴客機摸到什麼。
+- **所有人（包括房主）的狀態都是部分資訊**：別家的暗牌是負值佔位 `-(位置+1)`，引擎把它當成不是花、不屬任何牌種的「不明牌」。
+- **房主是唯一的排序者**：所有訊息經房主轉送，每台裝置依相同順序套用；客機自己的動作也要等房主回送才套用。
+- **吃、碰、槓、胡的選項由各家在本機計算**；宣告時公開所用的牌，各家依公開的牌重算後驗證。
+- **只能事後驗證的動作**（宣告聽牌、過水）延到 §4.7 的重播稽核。
+- 四家的「公開投影」必定一致（測試在每次網路靜止時逐一比對）。
+- 原本的房主權威流程（`SEED_COMMIT`、`STATE_SYNC`、`ROUND_AUDIT`）保留，供 §4.8 斷線降級沿用。
 
 ## 6. 原型驗證結果（2026-10-26）
 
@@ -206,12 +222,12 @@ T = [T₀ … T₁₄₃]                                   # 144 張牌面點�
   - **任務內容**：`IDENTITY_ANNOUNCE`、公鑰隨 `ROOM_SNAPSHOT` 下發、房間安全碼（4 個 emoji）顯示在大廳；所有協定訊息加上簽章，收到時驗證。
   - **驗收指令**：`pnpm test && pnpm build`
 
-- [ ] **WP-5.4：開局洗牌與摸牌協定**
+- [x] **WP-5.4：開局洗牌與摸牌協定**
   - **目標檔案**：`src/features/table/application/deckProtocol.ts`（新）、`src/shared/kernel/types.ts`
   - **任務內容**：§4.4～§4.6 的訊息流程（依序洗牌、換鑰、批次配牌、自動送出金鑰分享、公開牌）。測試使用 4 位真人的 `FakeTransport`。
   - **驗收指令**：`pnpm test && pnpm build`
 
-- [ ] **WP-5.5：牌桌狀態機去全知化**
+- [x] **WP-5.5：牌桌狀態機去全知化**
   - **目標檔案**：`src/features/table/domain/tableState.ts`、`src/features/table/domain/stateView.ts`、`src/features/table/application/useTableSession.ts`
   - **任務內容**：§5 的部分資訊狀態、本機計算選項、以公開金鑰驗證宣告、§4.7 的結算公開與重播稽核（指出作弊座位）；兩位以上真人的房間啟用，其餘維持現行流程。
   - **驗收指令**：`pnpm test && pnpm build`
@@ -219,7 +235,7 @@ T = [T₀ … T₁₄₃]                                   # 144 張牌面點�
 
 - [ ] **WP-5.6：斷線降級、UI 與文件**
   - **目標檔案**：`src/features/table/application/useTableSession.ts`、`src/features/table/ui/TableArena.vue`、`src/features/table/ui/SettlementModal.vue`、`docs/02-architecture-and-rules.md`
-  - **任務內容**：§4.8 的斷線降級（交出暗牌、重洗未知牌池、Bot 接手、防作弊失效提示）與嚴格模式作廢選項；逾時責任紀錄；牌桌顯示安全碼；結算顯示稽核結果與責任方；更新 `02` §4 的協定規格。
+  - **任務內容**：§4.8 的斷線降級（交出暗牌、重洗未知牌池、Bot 接手、防作弊失效提示）與嚴格模式作廢選項；逾時責任紀錄；**證據檔下載與匯入驗證畫面**（`SecureChannel.exportEvidence()` 已就緒）；更新 `02` §4 的協定規格。（牌桌顯示安全碼、結算顯示稽核結果與責任方已在 WP-5.5 完成。）
   - **必要測試**：4 位真人中途 1 人斷線，降級後能打完並通過降級段稽核；重洗後的牌池與斷線前的公開牌、剩餘真人暗牌沒有重複。
   - **驗收指令**：`pnpm test && pnpm build`，並以兩個瀏覽器實機連線打完一局。
 

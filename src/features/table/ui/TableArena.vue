@@ -5,6 +5,7 @@ import type { PlayerActionCommand, ProtocolMessage, RoomSeatSlot, RuleConfig, Se
 import { isAudioMuted, setAudioMuted } from '@/features/audio'
 import type { PeerTransportPort } from '@/features/lobby/infra/peerAdapter'
 import { useTableSession } from '../application/useTableSession'
+import type { SecureTableSecurity } from '../application/secureTable'
 import { TableScene } from '../engine/TableScene'
 import ActionHud from './ActionHud.vue'
 import SettlementModal from './SettlementModal.vue'
@@ -16,6 +17,7 @@ const props = defineProps<{
   roomSeats?: readonly RoomSeatSlot[]
   transport?: PeerTransportPort | null
   initialMessage?: ProtocolMessage
+  security?: SecureTableSecurity & { safetyCode?: string[] }
 }>()
 
 const emit = defineEmits<{
@@ -47,6 +49,8 @@ const {
   initAndStartRound,
   startNextRound,
   dispatchAction,
+  auditStatus,
+  securityFault,
 } = useTableSession({
   localSeat: props.localSeat ?? 0,
   isHost: props.isHost ?? true,
@@ -54,6 +58,19 @@ const {
   roomSeats: props.roomSeats,
   transport: props.transport ?? null,
   initialMessage: props.initialMessage,
+  security: props.security,
+})
+
+/** 結算畫面的稽核說明 */
+const auditNote = computed(() => {
+  const f = securityFault.value
+  if (f) {
+    const who = f.seat === null ? '' : `${state.seats[f.seat]?.name ?? `座位 ${f.seat}`}：`
+    return `⚠ 稽核未通過 · ${who}${f.reason}`
+  }
+  if (auditStatus.value === 'pending') return '稽核中…'
+  if (auditStatus.value === 'fail') return '⚠ 牌山承諾異常'
+  return props.security ? '✓ 防作弊稽核通過' : '✓ 牌山承諾驗證通過'
 })
 
 
@@ -228,6 +245,12 @@ onUnmounted(() => {
         <span class="hidden h-3 w-px bg-white/15 sm:inline-block" />
         <span class="font-bold tabular-nums text-[var(--muted)]">{{ state.rules.basePoints }}/{{ state.rules.taiPoints }}</span>
         <span v-if="transport" class="size-1.5 rounded-full bg-[var(--jade)]" title="P2P 連線中" />
+        <span
+          v-if="security?.safetyCode"
+          class="hidden tracking-[0.1em] sm:inline"
+          :title="'房間安全碼（防作弊牌局）'"
+          :aria-label="`房間安全碼 ${security.safetyCode.join(' ')}`"
+        >{{ security.safetyCode.join('') }}</span>
       </div>
 
       <div class="pointer-events-auto flex items-center gap-2">
@@ -258,6 +281,15 @@ onUnmounted(() => {
       </div>
     </header>
 
+    <!-- 防作弊牌局中途發現違規：本局作廢 -->
+    <p
+      v-if="securityFault && state.phase !== 'ROUND_SETTLEMENT'"
+      role="alert"
+      class="absolute inset-x-3 top-[max(3.4rem,calc(env(safe-area-inset-top)+3rem))] z-40 mx-auto max-w-md rounded-xl border border-[var(--cinnabar)]/50 bg-[#2a0f0a]/95 px-3 py-2 text-center text-xs font-bold text-[#ffb4a3]"
+    >
+      {{ auditNote }}，本局作廢
+    </p>
+
     <!-- 浮動操作層：動態根據手牌實際高度貼合定位 -->
     <footer
       class="pointer-events-none absolute inset-x-0 z-30 transition-all duration-200"
@@ -282,7 +314,9 @@ onUnmounted(() => {
     <!-- 結算彈窗 -->
     <SettlementModal
       :state="state"
-      :can-advance="props.isHost ?? true"
+      :audit-status="auditStatus"
+      :audit-note="auditNote"
+      :can-advance="(props.isHost ?? true) && auditStatus !== 'pending'"
       @next-round="startNextRound"
       @back-to-lobby="emit('leaveTable')"
     />

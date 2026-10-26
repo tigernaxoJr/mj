@@ -28,6 +28,26 @@ import {
 
 export const DEAD_WALL_SIZE = 16 // 台灣 16 張麻將鐵八墩（海底留 16 張）
 
+// ---- 防作弊牌局（Mental Poker）的部分資訊 ----
+// 牌山位置尚未經持有者宣告時為 WALL_UNKNOWN；已宣告但本機看不到牌面時，以 hiddenTileAt(位置) 佔位。
+// 佔位值為負數：不是花牌、不屬任何牌種，規則引擎把它當成「一張不知道是什麼的牌」。
+export const WALL_UNKNOWN = -10_000
+
+export function hiddenTileAt(wallIndex: number): TileId {
+  return -(wallIndex + 1)
+}
+
+export function hiddenTileWallIndex(tile: TileId): number {
+  return -tile - 1
+}
+
+/** 引擎需要讀取尚未宣告的牌山位置：由呼叫端取得持有者宣告後重跑同一步 */
+export class WallPending extends Error {
+  constructor(readonly positions: { wallIndex: number; seat: SeatIndex }[]) {
+    super(`wall positions pending: ${positions.map((p) => p.wallIndex).join(',')}`)
+  }
+}
+
 export interface PlayerSeatState {
   seat: SeatIndex
   name: string
@@ -94,6 +114,11 @@ export interface TableState {
   calloutSeq: number
   anyMeldHappened: boolean
   auditVerified: boolean
+  /**
+   * 防作弊牌局：沒有人知道別家手牌，所以每次打牌後其餘三家「一律」進入回應窗（沒得吃碰胡就自動過），
+   * 宣告吃碰槓胡時再公開所用的牌，由各家自行驗證。
+   */
+  openClaims: boolean
 }
 
 const WIND_ORDER: readonly WindName[] = ['east', 'south', 'west', 'north']
@@ -152,6 +177,7 @@ export function createInitialTableState(
     calloutSeq: 0,
     anyMeldHappened: false,
     auditVerified: true,
+    openClaims: false,
   }
 }
 
@@ -160,22 +186,41 @@ function updateRemainingCount(state: TableState): void {
   state.remainingTiles = raw
 }
 
-function drawFromHead(state: TableState): TileId | null {
+function wallAt(state: TableState, wallIndex: number, seat: SeatIndex): TileId {
+  const tile = state.wallTiles[wallIndex]
+  if (tile === WALL_UNKNOWN) throw new WallPending([{ wallIndex, seat }])
+  return tile
+}
+
+function drawFromHead(state: TableState, seat: SeatIndex): TileId | null {
   updateRemainingCount(state)
   if (state.remainingTiles <= 0) return null
-  const tile = state.wallTiles[state.headCursor]
+  const tile = wallAt(state, state.headCursor, seat)
   state.headCursor++
   updateRemainingCount(state)
   return tile
 }
 
-function drawFromTail(state: TableState): TileId | null {
+function drawFromTail(state: TableState, seat: SeatIndex): TileId | null {
   updateRemainingCount(state)
   if (state.remainingTiles <= 0) return null
+  const tile = wallAt(state, state.tailCursor - 1, seat)
   state.tailCursor--
-  const tile = state.wallTiles[state.tailCursor]
   updateRemainingCount(state)
   return tile
+}
+
+/** 開局配牌順序：位置 0..64 各發給哪一家（4 輪 × 4 家 × 4 張，莊家再補第 17 張） */
+export function dealPositionOwners(dealerSeat: SeatIndex): SeatIndex[] {
+  const owners: SeatIndex[] = []
+  for (let round = 0; round < 4; round++) {
+    for (let offset = 0; offset < 4; offset++) {
+      const seat = ((dealerSeat + offset) % 4) as SeatIndex
+      for (let c = 0; c < 4; c++) owners.push(seat)
+    }
+  }
+  owners.push(dealerSeat)
+  return owners
 }
 
 function pushCallout(state: TableState, seat: SeatIndex, label: ActionCallout['label']): void {
@@ -201,7 +246,7 @@ function replaceFlowersForSeat(state: TableState, seat: SeatIndex): boolean {
         settleWin(state, [seat], null, true, flowerIds[flowerIds.length - 1], true, false, false)
         return true
       }
-      const rep = drawFromTail(state)
+      const rep = drawFromTail(state, seat)
       if (rep === null) break
       player.concealed.push(rep)
     }
@@ -222,9 +267,32 @@ export function startRound(
   const committed = createCommittedWall(roundSeed, hostSecret)
   state.roundSeed = roundSeed
   state.hostSecret = hostSecret
-  state.wallTiles = committed.tiles
   state.wallSalts = committed.salts
   state.wallLeafHashes = committed.leafHashes
+  state.openClaims = false
+  dealRound(state, committed.tiles)
+}
+
+/**
+ * 防作弊牌局開局：`wall` 為本機已知的牌山（未宣告位置為 WALL_UNKNOWN）。
+ * 配牌位置尚未宣告時一次丟出全部 65 個位置，讓各家批次送出金鑰分享。
+ */
+export function startSecureRound(state: TableState, wall: readonly TileId[]): void {
+  const owners = dealPositionOwners(state.dealerSeat)
+  const pending = owners
+    .map((seat, wallIndex) => ({ wallIndex, seat }))
+    .filter(({ wallIndex }) => wall[wallIndex] === WALL_UNKNOWN)
+  if (pending.length > 0) throw new WallPending(pending)
+  state.roundSeed = ''
+  state.hostSecret = ''
+  state.wallSalts = []
+  state.wallLeafHashes = []
+  state.openClaims = true
+  dealRound(state, [...wall])
+}
+
+function dealRound(state: TableState, wallTiles: TileId[]): void {
+  state.wallTiles = wallTiles
   state.headCursor = 0
   state.tailCursor = 144
   state.settlement = null
@@ -246,20 +314,10 @@ export function startRound(
   }
 
   state.phase = 'DEALING'
-  // 4 家各抓 16 張
-  for (let round = 0; round < 4; round++) {
-    for (let offset = 0; offset < 4; offset++) {
-      const seat = ((state.dealerSeat + offset) % 4) as SeatIndex
-      for (let c = 0; c < 4; c++) {
-        const t = drawFromHead(state)
-        if (t !== null) state.seats[seat].concealed.push(t)
-      }
-    }
-  }
-  // 莊家開門多抓第 17 張
-  const dealerExtra = drawFromHead(state)
-  if (dealerExtra !== null) {
-    state.seats[state.dealerSeat].concealed.push(dealerExtra)
+  // 4 家各抓 16 張，莊家開門多抓第 17 張
+  for (const seat of dealPositionOwners(state.dealerSeat)) {
+    const t = drawFromHead(state, seat)
+    if (t !== null) state.seats[seat].concealed.push(t)
   }
 
   // 開門補花階段：由莊家起逆時針依序補花
@@ -324,7 +382,7 @@ export function drawTileForCurrentSeat(state: TableState, isRinshan = false): vo
   const player = state.seats[seat]
   player.passLock = false
 
-  const drawn = isRinshan ? drawFromTail(state) : drawFromHead(state)
+  const drawn = isRinshan ? drawFromTail(state, seat) : drawFromHead(state, seat)
   if (drawn === null) {
     // 鐵八墩流局（臭莊）
     settleExhaustiveDraw(state)
@@ -348,7 +406,7 @@ export function drawTileForCurrentSeat(state: TableState, isRinshan = false): vo
       return
     }
 
-    const rep = drawFromTail(state)
+    const rep = drawFromTail(state, seat)
     if (rep === null) {
       settleExhaustiveDraw(state)
       return
@@ -401,7 +459,7 @@ export function applyPlayerAction(
         player.concealed = player.concealed.filter((id) => kindOf(id) !== action.kind)
         player.melds.push({
           type: 'ankan',
-          tiles: [...found.tiles],
+          tiles: sortTiles([...found.tiles]),
         })
         state.anyMeldHappened = true
         player.firstTurnUnbroken = false
@@ -427,18 +485,8 @@ export function applyPlayerAction(
         const chankanClaims: SeatClaimOption[] = []
         for (let offset = 1; offset <= 3; offset++) {
           const otherSeat = ((seat + offset) % 4) as SeatIndex
-          const other = state.seats[otherSeat]
-          if (!other.passLock && canWinWithHand(other.concealed, other.melds.length, found.tileId)) {
-            chankanClaims.push({
-              seat: otherSeat,
-              canRon: true,
-              ponTiles: null,
-              minkanTiles: null,
-              chiiOptions: [],
-              responded: false,
-              chosenAction: null,
-            })
-          }
+          const opt = claimOptionFor(state, otherSeat, found.tileId, seat, true)
+          if (opt.canRon || state.openClaims) chankanClaims.push(opt)
         }
         if (chankanClaims.length > 0) {
           state.lastDiscard = { seat, tileId: found.tileId, isChankanTarget: true }
@@ -453,7 +501,9 @@ export function applyPlayerAction(
 
       case 'DECLARE_MIGI': {
         const opts = getSelfTurnOptions(state, seat)
-        if (!opts.migiDiscardableTiles.includes(action.discardTileId)) return false
+        // 防作弊牌局看不到別家整手牌，聽牌是否成立留到結算重播驗證
+        const unverifiable = state.openClaims && player.concealed.some((t) => t < 0)
+        if (!unverifiable && !opts.migiDiscardableTiles.includes(action.discardTileId)) return false
         player.isMigi = true
         if (player.firstTurnUnbroken && !state.anyMeldHappened) {
           player.isTenhouMigi = true
@@ -492,29 +542,9 @@ function executeDiscardInternal(state: TableState, seat: SeatIndex, tileId: Tile
   // 檢查其餘三家是否有吃、碰、明槓、榮胡
   const claims: SeatClaimOption[] = []
   for (let offset = 1; offset <= 3; offset++) {
-    const otherSeat = ((seat + offset) % 4) as SeatIndex
-    const other = state.seats[otherSeat]
-    const isNextSeat = offset === 1
-
-    const canRon =
-      !other.passLock && canWinWithHand(other.concealed, other.melds.length, tileId)
-    const ponTiles = !other.isMigi && !other.passLock ? findPonTiles(other.concealed, tileId) : null
-    const minkanTiles =
-      !other.isMigi && !other.passLock && state.remainingTiles > 0
-        ? findMinkanTiles(other.concealed, tileId)
-        : null
-    const chiiOptions = !other.isMigi ? findChiiOptions(other.concealed, tileId, isNextSeat) : []
-
-    if (canRon || ponTiles || minkanTiles || chiiOptions.length > 0) {
-      claims.push({
-        seat: otherSeat,
-        canRon,
-        ponTiles,
-        minkanTiles,
-        chiiOptions,
-        responded: false,
-        chosenAction: null,
-      })
+    const opt = claimOptionFor(state, ((seat + offset) % 4) as SeatIndex, tileId, seat, false)
+    if (state.openClaims || opt.canRon || opt.ponTiles || opt.minkanTiles || opt.chiiOptions.length > 0) {
+      claims.push(opt)
     }
   }
 
@@ -535,6 +565,25 @@ function executeDiscardInternal(state: TableState, seat: SeatIndex, tileId: Tile
   state.currentSeat = ((seat + 1) % 4) as SeatIndex
   drawTileForCurrentSeat(state, false)
   return true
+}
+
+/** 某家對打出（或加槓）的牌可做的回應；防作弊牌局中別家手牌未知，算出來就是「沒有選項」 */
+function claimOptionFor(
+  state: TableState,
+  seat: SeatIndex,
+  tileId: TileId,
+  discarderSeat: SeatIndex,
+  chankan: boolean,
+): SeatClaimOption {
+  const other = state.seats[seat]
+  const canRon = !other.passLock && canWinWithHand(other.concealed, other.melds.length, tileId)
+  const open = !chankan && !other.isMigi
+  const ponTiles = open && !other.passLock ? findPonTiles(other.concealed, tileId) : null
+  const minkanTiles =
+    open && !other.passLock && state.remainingTiles > 0 ? findMinkanTiles(other.concealed, tileId) : null
+  const isNextSeat = (discarderSeat + 1) % 4 === seat
+  const chiiOptions = open ? findChiiOptions(other.concealed, tileId, isNextSeat) : []
+  return { seat, canRon, ponTiles, minkanTiles, chiiOptions, responded: false, chosenAction: null }
 }
 
 function claimPriorityOf(action: PlayerActionCommand | null): number {
@@ -559,6 +608,12 @@ function submitClaimResponse(
 ): boolean {
   const entry = state.claimWindow.find((c) => c.seat === seat)
   if (!entry || entry.responded) return false
+
+  // 防作弊牌局：宣告者已公開所用的牌，依目前已知的手牌重算選項再驗證
+  if (state.openClaims && state.lastDiscard && action.type !== 'CLAIM_PASS') {
+    const d = state.lastDiscard
+    Object.assign(entry, claimOptionFor(state, seat, d.tileId, d.seat, Boolean(d.isChankanTarget)))
+  }
 
   // 驗證動作合法性
   if (action.type === 'CLAIM_RON' && !entry.canRon) return false
@@ -905,6 +960,12 @@ export function prepareNextRound(
   roundSeed = `seed-${Date.now()}`,
   hostSecret = `secret-${Math.random().toString(36).slice(2)}`,
 ): void {
+  rotateDealer(state)
+  startRound(state, roundSeed, hostSecret)
+}
+
+/** 依上一局結算決定連莊或換莊（防作弊牌局另行發牌時單獨呼叫） */
+export function rotateDealer(state: TableState): void {
   const settlement = state.settlement
   if (settlement) {
     const dealerRetained =
@@ -921,5 +982,6 @@ export function prepareNextRound(
       state.dealerSeat = nextDealer
     }
   }
-  startRound(state, roundSeed, hostSecret)
+  // 避免重複換莊
+  state.settlement = null
 }

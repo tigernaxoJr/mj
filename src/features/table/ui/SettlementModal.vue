@@ -9,8 +9,10 @@ const props = withDefaults(
     state: TableState
     /** 連線客機不能自行開下一局，須等房主 */
     canAdvance?: boolean
+    auditStatus?: 'pending' | 'ok' | 'fail'
+    auditNote?: string
   }>(),
-  { canAdvance: true },
+  { canAdvance: true, auditStatus: 'ok', auditNote: '' },
 )
 
 const emit = defineEmits<{
@@ -195,8 +197,12 @@ function signed(n: number): string {
         <div
           class="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-black/25 px-4 pb-[max(0.9rem,env(safe-area-inset-bottom))] pt-3 sm:px-7"
         >
-          <p class="text-[11px]" :class="state.auditVerified ? 'text-[var(--jade-hi)]' : 'text-[#ff9c85]'">
-            {{ state.auditVerified ? '✓ 牌山承諾驗證通過' : '⚠ 牌山承諾異常' }}
+          <p
+            class="text-[11px]"
+            :class="auditStatus === 'ok' ? 'text-[var(--jade-hi)]' : auditStatus === 'pending' ? 'text-[var(--muted)]' : 'text-[#ff9c85]'"
+            aria-live="polite"
+          >
+            {{ auditNote || (state.auditVerified ? '✓ 牌山承諾驗證通過' : '⚠ 牌山承諾異常') }}
             <span class="text-[var(--faint)]">· 底 {{ state.rules.basePoints }} / 台 {{ state.rules.taiPoints }}</span>
           </p>
           <div class="flex w-full gap-2 sm:w-auto short:w-auto">

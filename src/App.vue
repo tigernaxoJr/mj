@@ -24,6 +24,7 @@ function handleLeaveTable(): void {
     :room-seats="activeMatch.roomSeats"
     :transport="activeMatch.transport"
     :initial-message="activeMatch.initialMessage"
+    :security="activeMatch.security"
     @leave-table="handleLeaveTable"
   />
   <LobbyHub v-else @start-match="handleStartMatch" />

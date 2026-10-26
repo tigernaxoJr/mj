@@ -25,6 +25,8 @@ import {
   type TableState,
 } from '../domain/tableState'
 import { canonicalJson, maskStateFor } from '../domain/stateView'
+import type { DeckFault } from './deckProtocol'
+import { SecureTable, type SecureTableSecurity } from './secureTable'
 
 export interface TableSessionOptions {
   localSeat?: SeatIndex
@@ -34,7 +36,11 @@ export interface TableSessionOptions {
   transport?: PeerTransportPort | null
   /** 客機：大廳收到、牌桌掛載前已被消耗的首則訊息（房主的開局承諾） */
   initialMessage?: ProtocolMessage
+  /** 兩位以上真人且已完成身分握手：改用 Mental Poker 防作弊牌局 */
+  security?: SecureTableSecurity
 }
+
+export type AuditStatus = 'pending' | 'ok' | 'fail'
 
 export function useTableSession(options: TableSessionOptions = {}) {
   const localSeat = ref<SeatIndex>(options.localSeat ?? 0)
@@ -61,7 +67,19 @@ export function useTableSession(options: TableSessionOptions = {}) {
   const localClaimEntry = computed<SeatClaimOption | null>(() => {
     if (state.phase !== 'CLAIM_WINDOW') return null
     const entry = state.claimWindow.find((c) => c.seat === localSeat.value && !c.responded)
-    return entry ?? null
+    // 防作弊牌局每次都會進回應窗；沒得吃碰胡時自動「過」，不顯示操作鈕
+    return entry && hasClaimOption(entry) ? entry : null
+  })
+
+  // ---- 防作弊牌局（兩位以上真人）----
+  const securityFault = ref<DeckFault | null>(null)
+  const secureAudited = ref(false)
+  let secure: SecureTable | null = null
+
+  const auditStatus = computed<AuditStatus>(() => {
+    if (securityFault.value || !state.auditVerified) return 'fail'
+    if (secure && !secureAudited.value) return 'pending'
+    return 'ok'
   })
 
   /** 本家當前聽牌提示（當手牌為 $3n+1$ 待摸狀態時直接計算，若為 $3n+2$ 待打狀態則取選中牌打出後的聽牌） */
@@ -152,8 +170,45 @@ export function useTableSession(options: TableSessionOptions = {}) {
     },
   )
 
+  function hasClaimOption(c: SeatClaimOption): boolean {
+    return c.canRon || c.ponTiles !== null || c.minkanTiles !== null || c.chiiOptions.length > 0
+  }
+
+  /** 防作弊牌局：本機替自己的座位自動「過」與聽牌後摸切；房主另外代電腦座位出牌 */
+  function scheduleSecureAuto(): void {
+    if (!secure || secure.fault) return
+    const mine = (seat: SeatIndex) =>
+      seat === localSeat.value || (isHost.value && secure!.isBotSeat(seat))
+    if (state.phase === 'CLAIM_WINDOW') {
+      const entry = state.claimWindow.find(
+        (c) => !c.responded && mine(c.seat) && (state.seats[c.seat].isBot || !hasClaimOption(c)),
+      )
+      if (!entry) return
+      botTimer = setTimeout(() => {
+        const cmd = state.seats[entry.seat].isBot
+          ? decideBotActionForSeat(state, entry.seat)
+          : ({ type: 'CLAIM_PASS' } as const)
+        if (cmd) dispatchAction(entry.seat, cmd)
+      }, state.seats[entry.seat].isBot ? 320 : 0)
+      return
+    }
+    if (state.phase !== 'TURN_ACTION_OR_DISCARD' || !mine(state.currentSeat)) return
+    const seat = state.currentSeat
+    const player = state.seats[seat]
+    if (player.isBot) {
+      botTimer = setTimeout(() => {
+        const cmd = decideBotActionForSeat(state, seat)
+        if (cmd) dispatchAction(seat, cmd)
+      }, 420)
+    } else if (player.isMigi && !getSelfTurnOptions(state, seat).canTsumo) {
+      const drawn = state.lastDrawnTile?.seat === seat ? state.lastDrawnTile.tileId : null
+      if (drawn !== null) botTimer = setTimeout(() => dispatchAction(seat, { type: 'DISCARD', tileId: drawn }), 550)
+    }
+  }
+
   function scheduleBotStepIfNeeded(): void {
     clearBotTimer()
+    if (secure) return scheduleSecureAuto()
     if (!isHost.value) return
     if (state.phase !== 'TURN_ACTION_OR_DISCARD' && state.phase !== 'CLAIM_WINDOW') return
 
@@ -242,6 +297,15 @@ export function useTableSession(options: TableSessionOptions = {}) {
   }
 
   function dispatchAction(seat: SeatIndex, action: PlayerActionCommand): boolean {
+    // 防作弊牌局：簽章廣播，等房主排序回送後各家同時套用
+    if (secure) {
+      const ok = secure.submit(seat, action)
+      if (ok && (action.type === 'DISCARD' || action.type === 'DECLARE_MIGI')) {
+        migiSelectMode.value = false
+        selectedTileId.value = null
+      }
+      return ok
+    }
     // 客機只送出意圖，由房主驗證後套用；結果以 STATE_SYNC 回傳
     if (!isHost.value && transport) {
       transport.sendToHost({ type: 'PLAYER_ACTION', seat, action })
@@ -358,6 +422,10 @@ export function useTableSession(options: TableSessionOptions = {}) {
 
   /** P2P 訊息接收 */
   function handleProtocolMessage(msg: ProtocolMessage, fromPeer?: PlayerId): void {
+    if (secure) {
+      secure.receive(msg, fromPeer)
+      return
+    }
     switch (msg.type) {
       // 房主：收集各客機的種子
       case 'SEED_REVEAL': {
@@ -441,8 +509,47 @@ export function useTableSession(options: TableSessionOptions = {}) {
     scheduleBotStepIfNeeded()
   }
 
+  function createSecureTable(): void {
+    if (!transport || !options.security || options.security.members.length < 2) return
+    let lastHead = state.headCursor
+    secure = new SecureTable({
+      state,
+      localSeat: localSeat.value,
+      isHost: isHost.value,
+      roomSeats: options.roomSeats ?? [],
+      transport,
+      security: options.security,
+      onStep: (_actor, action) => {
+        playActionSfx(action, lastHead)
+        lastHead = state.headCursor
+        secureAudited.value = secure?.audited ?? false
+        if (action === null && state.phase === 'TURN_ACTION_OR_DISCARD') playSfx('shuffle')
+        if (action && (action.type === 'DISCARD' || action.type === 'DECLARE_MIGI')) {
+          migiSelectMode.value = false
+          selectedTileId.value = null
+        }
+        viewSeq.value++
+        scheduleBotStepIfNeeded()
+      },
+      onFault: (f) => {
+        securityFault.value = f
+        secureAudited.value = secure?.audited ?? false
+        clearBotTimer()
+        viewSeq.value++
+      },
+    })
+  }
+
   async function initAndStartRound(customSeed?: string): Promise<void> {
     await initMahjongWasm()
+    createSecureTable()
+    if (secure) {
+      // 客機：先處理觸發開局的那則（序號最小），再接管大廳暫存的後續訊息，順序才不會亂
+      if (!isHost.value && options.initialMessage) handleProtocolMessage(options.initialMessage)
+      transport?.setMessageSink(handleProtocolMessage)
+      if (isHost.value) secure.startRound()
+      return
+    }
     // 牌桌就緒才接管連線訊息，之前的訊息由 transport 暫存
     transport?.setMessageSink(handleProtocolMessage)
     if (isHost.value) {
@@ -454,7 +561,18 @@ export function useTableSession(options: TableSessionOptions = {}) {
 
   async function startNextRound(): Promise<void> {
     if (!isHost.value || state.phase !== 'ROUND_SETTLEMENT') return
+    if (secure) {
+      securityFault.value = null
+      secureAudited.value = false
+      secure.startRound()
+      return
+    }
     await beginRound(false)
+  }
+
+  /** 下載用：本機收到的全部簽章訊息（第三方可自行驗簽與稽核） */
+  function exportEvidence() {
+    return secure?.exportEvidence() ?? null
   }
 
   /** 將斷線玩家座位轉為電腦玩家立即接手 */
@@ -486,5 +604,8 @@ export function useTableSession(options: TableSessionOptions = {}) {
     dispatchAction,
     handleProtocolMessage,
     convertSeatToBot,
+    auditStatus,
+    securityFault,
+    exportEvidence,
   }
 }

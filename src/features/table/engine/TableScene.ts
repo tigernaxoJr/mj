@@ -626,7 +626,8 @@ export class TableScene extends Phaser.Scene {
     const r = this.rel(seat)
     const { w, cx, cy, y0, u, oppW, oppH, portrait } = L
     const reveal = s.phase === 'ROUND_SETTLEMENT'
-    const handKey = (tid: TileId) => (reveal ? `tile_${kindOf(tid)}` : 'tile_back')
+    // 防作弊牌局在稽核完成前，他家暗牌仍是未知（負值佔位）
+    const handKey = (tid: TileId) => (reveal && tid >= 0 ? `tile_${kindOf(tid)}` : 'tile_back')
     const items: { key: string; gapBefore: number }[] = [
       ...p.concealed.map((t) => ({ key: handKey(t), gapBefore: 0 })),
       ...p.melds.flatMap((m) =>
