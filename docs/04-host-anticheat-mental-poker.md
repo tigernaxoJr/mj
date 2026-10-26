@@ -1,6 +1,6 @@
 # 防房主作弊：Mental Poker 牌山協定計畫 (04-host-anticheat-mental-poker.md)
 
-> 狀態：**Phase 5 進行中**。WP-5.1 密碼核心已併入 [`crates/mahjong-core/src/mental_poker.rs`](../crates/mahjong-core/src/mental_poker.rs)；連線協定與牌桌整合（WP-5.2～5.6）尚未開始。
+> 狀態：**Phase 5 進行中**。WP-5.1 密碼核心已併入 [`crates/mahjong-core/src/mental_poker.rs`](../crates/mahjong-core/src/mental_poker.rs)，WP-5.2 的 Wasm 綁定與 TS 封裝（`src/shared/wasm/index.ts` 的 `mp*` 函式）已完成；連線協定與牌桌整合（WP-5.3～5.6）尚未開始。
 > 適用範圍：**兩位以上真人**的連線房間。單機與「1 真人 + 3 電腦」維持現行流程。
 
 ---
@@ -190,9 +190,9 @@ T = [T₀ … T₁₄₃]                                   # 144 張牌面點�
     3. 移植 §6 的 8 個測試，並補上簽章測試。
   - **驗收指令**：`pnpm test:rust`
 
-- [ ] **WP-5.2：Wasm 綁定與 TS 封裝**
+- [x] **WP-5.2：Wasm 綁定與 TS 封裝**
   - **目標檔案**：`crates/mahjong-core/src/lib.rs`、`src/shared/wasm/index.ts`
-  - **任務內容**：匯出 WP-5.1 的介面（以 base64 傳遞點與純量），並用 `crypto.getRandomValues` 產生本局秘密；補上 Vitest 往返測試。
+  - **任務內容**：匯出 WP-5.1 的介面（Wasm 邊界以 `Uint8Array` 傳遞點與純量，上線傳輸用 `bytesToBase64`），並用 `crypto.getRandomValues` 產生本局秘密；補上 Vitest 往返測試（`src/test/mentalPoker.test.ts`）。綁定為無狀態函式，秘密只留在 JS 端。加入密碼函式庫後 `.wasm` 由 206 KB 增為 438 KB（gzip 185 KB）。
   - **驗收指令**：`pnpm test:rust && pnpm test && pnpm build`
 
 - [ ] **WP-5.3：身分、安全碼與簽章信封**

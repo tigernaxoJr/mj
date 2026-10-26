@@ -41,7 +41,7 @@
 ## Phase 5：防房主作弊 Mental Poker 牌山協定（規劃中，詳見 [`docs/04-host-anticheat-mental-poker.md`](./docs/04-host-anticheat-mental-poker.md)）
 
 - [x] **WP-5.1：Rust 密碼核心（Ristretto255 可交換加密洗牌、逐張金鑰承諾、稽核、`crypto_box` 金鑰分享）**
-- [ ] **WP-5.2：Wasm 綁定與 TS 封裝**
+- [x] **WP-5.2：Wasm 綁定與 TS 封裝**
 - [ ] **WP-5.3：身分、房間安全碼與簽章信封**
 - [ ] **WP-5.4：開局洗牌與摸牌協定**
 - [ ] **WP-5.5：牌桌狀態機去全知化（房主不再知道別人的牌）**

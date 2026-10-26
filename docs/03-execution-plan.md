@@ -130,7 +130,7 @@
 完整設計、威脅模型、原型驗證結果與各工作包的目標檔案、驗收指令，見 [`04-host-anticheat-mental-poker.md`](./04-host-anticheat-mental-poker.md) §7。
 
 - [x] **WP-5.1：Rust 密碼核心 (`mental_poker.rs`)**
-- [ ] **WP-5.2：Wasm 綁定與 TS 封裝**
+- [x] **WP-5.2：Wasm 綁定與 TS 封裝**
 - [ ] **WP-5.3：身分、安全碼與簽章信封**
 - [ ] **WP-5.4：開局洗牌與摸牌協定**
 - [ ] **WP-5.5：牌桌狀態機去全知化**

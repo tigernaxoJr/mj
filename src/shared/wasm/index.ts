@@ -352,6 +352,173 @@ export function chooseBotDiscard(
   return pool.includes(best) ? best : pool[0]
 }
 
+// --- Mental Poker（WP-5.2，設計見 docs/04-host-anticheat-mental-poker.md）---
+// Wasm 介面以 Uint8Array 傳遞；上線傳輸時再以 base64 編碼。
+
+/** 牌山：144 個壓縮點，共 144 × 32 bytes */
+export type MpDeck = Uint8Array
+export const MP_DECK_BYTES = 144 * 32
+
+/** 由 Web Crypto CSPRNG 產生 32 bytes（本局秘密、身分種子） */
+export function randomBytes32(): Uint8Array {
+  return crypto.getRandomValues(new Uint8Array(32))
+}
+
+/** 本次連線的身分種子；只留在本機，絕不送出 */
+export interface MpIdentitySeeds {
+  signSeed: Uint8Array
+  boxSeed: Uint8Array
+}
+
+export interface MpIdentityPublic {
+  signPub: Uint8Array
+  boxPub: Uint8Array
+}
+
+export interface MpShareContext {
+  round: number
+  wallIndex: number
+  fromSeat: number
+  toSeat: number
+}
+
+export type MpAuditResult =
+  | { ok: true; wall: TileId[] }
+  | { ok: false; fault: 'malformed' | 'shuffle' | 'rekey' | 'commit'; layer?: number; wallIndex?: number }
+
+function concatBytes(parts: readonly Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
+  let offset = 0
+  for (const p of parts) {
+    out.set(p, offset)
+    offset += p.length
+  }
+  return out
+}
+
+export function createIdentitySeeds(): MpIdentitySeeds {
+  return { signSeed: randomBytes32(), boxSeed: randomBytes32() }
+}
+
+export function mpIdentityPublic(seeds: MpIdentitySeeds): MpIdentityPublic {
+  const both = core().mp_identity_public(seeds.signSeed, seeds.boxSeed)
+  return { signPub: both.slice(0, 32), boxPub: both.slice(32, 64) }
+}
+
+export function mpInitialDeck(): MpDeck {
+  return core().mp_initial_deck()
+}
+
+/** 洗牌輪：`shuffle(k_p · deck)` */
+export function mpShufflePass(deck: MpDeck, secret: Uint8Array): MpDeck {
+  return core().mp_shuffle_pass(deck, secret)
+}
+
+/** 換鑰輪：全域鎖換成逐張鎖 */
+export function mpRekeyPass(deck: MpDeck, secret: Uint8Array): MpDeck {
+  return core().mp_rekey_pass(deck, secret)
+}
+
+export function mpCardKey(secret: Uint8Array, wallIndex: number): Uint8Array {
+  return core().mp_card_key(secret, wallIndex)
+}
+
+/** 換鑰輪公開的 144 筆承諾（144 × 32 bytes） */
+export function mpCardCommits(secret: Uint8Array): Uint8Array {
+  return core().mp_card_commits(secret)
+}
+
+export function mpCommitCardKey(key: Uint8Array): Uint8Array {
+  return core().mp_commit_card_key(key)
+}
+
+/** 取出牌山第 `wallIndex` 張的密文 */
+export function mpDeckCipher(deck: MpDeck, wallIndex: number): Uint8Array {
+  return deck.subarray(wallIndex * 32, wallIndex * 32 + 32)
+}
+
+/** 以所有層的逐張鎖開鎖；缺任何一層或金鑰錯誤時回傳 null */
+export function mpUnlock(cipher: Uint8Array, keys: readonly Uint8Array[]): TileId | null {
+  const tile = core().mp_unlock(cipher, concatBytes(keys))
+  return tile < 0 ? null : tile
+}
+
+/** 結算稽核：依層順序帶入各層洗牌輸出、換鑰輸出、承諾與公開的本局秘密 */
+export function mpAuditRound(transcript: {
+  shuffled: readonly MpDeck[]
+  rekeyed: readonly MpDeck[]
+  commits: readonly Uint8Array[]
+  secrets: readonly Uint8Array[]
+}): MpAuditResult {
+  const res = JSON.parse(
+    core().mp_audit_round_json(
+      concatBytes(transcript.shuffled),
+      concatBytes(transcript.rekeyed),
+      concatBytes(transcript.commits),
+      concatBytes(transcript.secrets),
+    ),
+  ) as { wall?: TileId[]; fault?: 'malformed' | 'shuffle' | 'rekey' | 'commit'; layer?: number; wallIndex?: number }
+  if (res.wall) return { ok: true, wall: res.wall }
+  return { ok: false, fault: res.fault ?? 'malformed', layer: res.layer, wallIndex: res.wallIndex }
+}
+
+export function mpSign(seeds: MpIdentitySeeds, message: Uint8Array): Uint8Array {
+  return core().mp_sign(seeds.signSeed, message)
+}
+
+export function mpVerifySignature(signPub: Uint8Array, message: Uint8Array, signature: Uint8Array): boolean {
+  return core().mp_verify_signature(signPub, message, signature)
+}
+
+/** 把逐張鎖封裝給收方；房主轉送也看不到內容 */
+export function mpSealShare(
+  seeds: MpIdentitySeeds,
+  recipientBoxPub: Uint8Array,
+  ctx: MpShareContext,
+  key: Uint8Array,
+): Uint8Array {
+  return core().mp_seal_share(seeds.boxSeed, recipientBoxPub, ctx.round, ctx.wallIndex, ctx.fromSeat, ctx.toSeat, key)
+}
+
+/** 解開金鑰分享；被竄改、送錯人或情境不符時回傳 null */
+export function mpOpenShare(
+  seeds: MpIdentitySeeds,
+  senderBoxPub: Uint8Array,
+  ctx: MpShareContext,
+  sealed: Uint8Array,
+): Uint8Array | null {
+  return (
+    core().mp_open_share(seeds.boxSeed, senderBoxPub, ctx.round, ctx.wallIndex, ctx.fromSeat, ctx.toSeat, sealed) ??
+    null
+  )
+}
+
+/** 房間安全碼原始雜湊（32 bytes）；顯示成 emoji 由 WP-5.3 處理 */
+export function mpRoomFingerprint(
+  roomCode: string,
+  members: readonly ({ seat: number } & MpIdentityPublic)[],
+): Uint8Array {
+  return core().mp_room_fingerprint(
+    roomCode,
+    concatBytes(members.map((m) => concatBytes([Uint8Array.of(m.seat), m.signPub, m.boxPub]))),
+  )
+}
+
+export function bytesToBase64(bytes: Uint8Array): string {
+  let bin = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  }
+  return btoa(bin)
+}
+
+export function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
+}
+
 export interface MahjongCorePort {
   kindOf(tileId: TileId): TileKind
   isFlower(kind: TileKind): boolean
