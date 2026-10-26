@@ -493,6 +493,28 @@ export function mpOpenShare(
   )
 }
 
+/** 任意內容的端對端加密（斷線降級：交出暗牌、房主私下發牌）；情境不可與金鑰分享重複 */
+export function mpSealBytes(
+  seeds: MpIdentitySeeds,
+  recipientBoxPub: Uint8Array,
+  ctx: MpShareContext,
+  plain: Uint8Array,
+): Uint8Array {
+  return core().mp_seal_bytes(seeds.boxSeed, recipientBoxPub, ctx.round, ctx.wallIndex, ctx.fromSeat, ctx.toSeat, plain)
+}
+
+export function mpOpenBytes(
+  seeds: MpIdentitySeeds,
+  senderBoxPub: Uint8Array,
+  ctx: MpShareContext,
+  sealed: Uint8Array,
+): Uint8Array | null {
+  return (
+    core().mp_open_bytes(seeds.boxSeed, senderBoxPub, ctx.round, ctx.wallIndex, ctx.fromSeat, ctx.toSeat, sealed) ??
+    null
+  )
+}
+
 /** 房間安全碼原始雜湊（32 bytes）；顯示成 emoji 由 WP-5.3 處理 */
 export function mpRoomFingerprint(
   roomCode: string,

@@ -51,6 +51,8 @@ const {
   dispatchAction,
   auditStatus,
   securityFault,
+  secureStatus,
+  exportEvidence,
 } = useTableSession({
   localSeat: props.localSeat ?? 0,
   isHost: props.isHost ?? true,
@@ -61,6 +63,31 @@ const {
   security: props.security,
 })
 
+/** 牌局進行中的防作弊狀態提示（斷線、降級、旁觀） */
+const liveNotice = computed(() => {
+  const st = secureStatus.value
+  if (st.hostLost) return { tone: 'bad', text: '與房主的連線中斷，牌局無法繼續' }
+  if (state.phase === 'ROUND_SETTLEMENT') return null
+  if (securityFault.value) return { tone: 'bad', text: `${auditNote.value}，本局作廢` }
+  if (st.spectator) return { tone: 'warn', text: '你已被判定離線，由電腦代打（旁觀中）' }
+  if (st.degradedNote) return { tone: 'warn', text: `⚠ ${st.degradedNote}` }
+  return null
+})
+
+/** 下載本機保存的簽章紀錄（第三方可自行驗簽與重算） */
+function downloadEvidence(): void {
+  const log = exportEvidence()
+  if (!log) return
+  const blob = new Blob([JSON.stringify(log, null, 1)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')
+  a.href = url
+  a.download = `twmj-${log.roomCode}-${stamp}.json`
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 /** 結算畫面的稽核說明 */
 const auditNote = computed(() => {
   const f = securityFault.value
@@ -69,6 +96,7 @@ const auditNote = computed(() => {
     return `⚠ 稽核未通過 · ${who}${f.reason}`
   }
   if (auditStatus.value === 'pending') return '稽核中…'
+  if (auditStatus.value === 'degraded') return `⚠ ${secureStatus.value.degradedNote}`
   if (auditStatus.value === 'fail') return '⚠ 牌山承諾異常'
   return props.security ? '✓ 防作弊稽核通過' : '✓ 牌山承諾驗證通過'
 })
@@ -281,13 +309,18 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <!-- 防作弊牌局中途發現違規：本局作廢 -->
+    <!-- 防作弊牌局：違規作廢、斷線降級、與房主斷線 -->
     <p
-      v-if="securityFault && state.phase !== 'ROUND_SETTLEMENT'"
+      v-if="liveNotice"
       role="alert"
-      class="absolute inset-x-3 top-[max(3.4rem,calc(env(safe-area-inset-top)+3rem))] z-40 mx-auto max-w-md rounded-xl border border-[var(--cinnabar)]/50 bg-[#2a0f0a]/95 px-3 py-2 text-center text-xs font-bold text-[#ffb4a3]"
+      class="absolute inset-x-3 top-[max(3.4rem,calc(env(safe-area-inset-top)+3rem))] z-40 mx-auto max-w-md rounded-xl border px-3 py-2 text-center text-xs font-bold"
+      :class="
+        liveNotice.tone === 'bad'
+          ? 'border-[var(--cinnabar)]/50 bg-[#2a0f0a]/95 text-[#ffb4a3]'
+          : 'border-[var(--brass)]/50 bg-[#2a1d08]/95 text-[var(--brass-hi)]'
+      "
     >
-      {{ auditNote }}，本局作廢
+      {{ liveNotice.text }}
     </p>
 
     <!-- 浮動操作層：動態根據手牌實際高度貼合定位 -->
@@ -316,6 +349,8 @@ onUnmounted(() => {
       :state="state"
       :audit-status="auditStatus"
       :audit-note="auditNote"
+      :can-export="!!security"
+      @export-evidence="downloadEvidence"
       :can-advance="(props.isHost ?? true) && auditStatus !== 'pending'"
       @next-round="startNextRound"
       @back-to-lobby="emit('leaveTable')"

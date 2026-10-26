@@ -250,20 +250,26 @@ impl Identity {
     }
 
     pub fn seal_share(&self, recipient_box_pub: &[u8; 32], ctx: ShareContext, key: &Scalar) -> Vec<u8> {
-        use crypto_box::aead::Aead;
-        let recipient = crypto_box::PublicKey::from_bytes(*recipient_box_pub);
-        crypto_box::SalsaBox::new(&recipient, &self.boxing)
-            .encrypt(&ctx.nonce(), key.as_bytes().as_slice())
-            .expect("XSalsa20Poly1305 encryption of 32 bytes cannot fail")
+        self.seal_bytes(recipient_box_pub, ctx, key.as_bytes())
     }
 
     pub fn open_share(&self, sender_box_pub: &[u8; 32], ctx: ShareContext, sealed: &[u8]) -> Option<Scalar> {
+        scalar_from_bytes(self.open_bytes(sender_box_pub, ctx, sealed)?.try_into().ok()?)
+    }
+
+    /// 任意內容的端對端加密（斷線降級時交出暗牌、房主私下發牌）；`ctx` 不可與金鑰分享重複
+    pub fn seal_bytes(&self, recipient_box_pub: &[u8; 32], ctx: ShareContext, plain: &[u8]) -> Vec<u8> {
+        use crypto_box::aead::Aead;
+        let recipient = crypto_box::PublicKey::from_bytes(*recipient_box_pub);
+        crypto_box::SalsaBox::new(&recipient, &self.boxing)
+            .encrypt(&ctx.nonce(), plain)
+            .expect("XSalsa20Poly1305 encryption cannot fail")
+    }
+
+    pub fn open_bytes(&self, sender_box_pub: &[u8; 32], ctx: ShareContext, sealed: &[u8]) -> Option<Vec<u8>> {
         use crypto_box::aead::Aead;
         let sender = crypto_box::PublicKey::from_bytes(*sender_box_pub);
-        let plain = crypto_box::SalsaBox::new(&sender, &self.boxing)
-            .decrypt(&ctx.nonce(), sealed)
-            .ok()?;
-        scalar_from_bytes(plain.try_into().ok()?)
+        crypto_box::SalsaBox::new(&sender, &self.boxing).decrypt(&ctx.nonce(), sealed).ok()
     }
 }
 
@@ -472,6 +478,16 @@ mod tests {
         // 竄改一個位元被 Poly1305 拒絕
         sealed[0] ^= 1;
         assert_eq!(west.open_share(&south.box_public(), ctx, &sealed), None);
+    }
+
+    #[test]
+    fn sealed_bytes_open_only_for_the_recipient_and_context() {
+        let (a, b, host) = (identity("a"), identity("b"), identity("host"));
+        let ctx = ShareContext { round: 2, wall_index: 0xfff0, from_seat: 1, to_seat: 0 };
+        let sealed = a.seal_bytes(&b.box_public(), ctx, b"{\"hand\":[1,2,3]}");
+        assert_eq!(b.open_bytes(&a.box_public(), ctx, &sealed).as_deref(), Some(&b"{\"hand\":[1,2,3]}"[..]));
+        assert_eq!(host.open_bytes(&a.box_public(), ctx, &sealed), None);
+        assert_eq!(b.open_bytes(&a.box_public(), ShareContext { round: 3, ..ctx }, &sealed), None);
     }
 
     #[test]

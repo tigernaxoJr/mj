@@ -1,5 +1,5 @@
 import type { PlayerId, ProtocolMessage } from '@/shared/kernel/types'
-import type { MessageSink, PeerTransportPort } from '@/features/lobby/infra/peerAdapter'
+import type { MessageSink, PeerLeftHandler, PeerTransportPort } from '@/features/lobby/infra/peerAdapter'
 
 type Packet = { to: 'host' | PlayerId; from?: PlayerId; msg: ProtocolMessage }
 
@@ -10,6 +10,8 @@ type Packet = { to: 'host' | PlayerId; from?: PlayerId; msg: ProtocolMessage }
 export class FakeStar {
   private queue: Packet[] = []
   private sinks = new Map<'host' | PlayerId, MessageSink>()
+  private leftHandlers = new Map<'host' | PlayerId, PeerLeftHandler>()
+  private gone = new Set<PlayerId>()
   tamper: ((p: Packet) => ProtocolMessage | null) | null = null
   delivered = 0
 
@@ -37,11 +39,22 @@ export class FakeStar {
         if (sink) this.sinks.set(me, sink)
         else this.sinks.delete(me)
       },
+      setPeerLeftHandler: (h) => {
+        if (h) this.leftHandlers.set(me, h)
+        else this.leftHandlers.delete(me)
+      },
       holdMessages: () => {},
       lockRoom: () => {},
       disconnect: () => {},
     }
     return port as PeerTransportPort
+  }
+
+  /** 模擬客機斷線：之後不再收送，房主收到通知 */
+  drop(slot: PlayerId): void {
+    this.gone.add(slot)
+    this.queue = this.queue.filter((p) => p.to !== slot && p.from !== slot)
+    this.leftHandlers.get('host')?.(slot)
   }
 
   /** 送出所有排隊中的封包（含處理過程中新產生的），回傳送達數 */
@@ -50,6 +63,7 @@ export class FakeStar {
     while (this.queue.length > 0) {
       if (++n > limit) throw new Error('FakeStar: 訊息無限循環')
       const p = this.queue.shift()!
+      if ((p.to !== 'host' && this.gone.has(p.to)) || (p.from && this.gone.has(p.from))) continue
       const msg = this.tamper ? this.tamper(p) : p.msg
       if (!msg) continue
       this.delivered++

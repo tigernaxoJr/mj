@@ -59,7 +59,16 @@ export interface SecureDeckOptions {
 
 export type RoundAudit = { ok: true; wall: TileId[] } | { ok: false; fault: DeckFault }
 
-export class SecureDeck {
+/** 牌桌取得牌山位置的介面：Mental Poker 牌山，或斷線降級後的房主發牌 */
+export interface WallDealer {
+  readonly known: Map<number, TileId>
+  request(positions: readonly { wallIndex: number; seat: SeatIndex }[]): void
+  proofFor(wallIndex: number): TileRevealProof | null
+  verifyProof(proof: TileRevealProof): TileId | null
+  onTileResolve(msg: { seat: SeatIndex; wallIndices: number[]; flowers: TileRevealProof[] }, signer: SeatIndex): void
+}
+
+export class SecureDeck implements WallDealer {
   readonly secret: Uint8Array
   private readonly myLayer: number
   private shuffled: MpDeck[] = []
@@ -84,6 +93,18 @@ export class SecureDeck {
 
   get isReady(): boolean {
     return this.rekeyed.length === this.opts.layers.length
+  }
+
+  /** 洗牌／換鑰輪下一個該動作的座位；都完成時為 null */
+  get nextShuffler(): SeatIndex | null {
+    const L = this.opts.layers.length
+    const t = this.shuffled.length + this.rekeyed.length
+    return t >= 2 * L ? null : this.opts.layers[t % L]
+  }
+
+  /** 已收到秘密的座位（逾時判定用） */
+  get revealedSeats(): SeatIndex[] {
+    return [...this.reveals.keys()]
   }
 
   private get finalDeck(): MpDeck {

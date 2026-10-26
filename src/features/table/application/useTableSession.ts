@@ -26,7 +26,7 @@ import {
 } from '../domain/tableState'
 import { canonicalJson, maskStateFor } from '../domain/stateView'
 import type { DeckFault } from './deckProtocol'
-import { SecureTable, type SecureTableSecurity } from './secureTable'
+import { SecureTable, type SecureTableSecurity, type TableIncident } from './secureTable'
 
 export interface TableSessionOptions {
   localSeat?: SeatIndex
@@ -40,7 +40,15 @@ export interface TableSessionOptions {
   security?: SecureTableSecurity
 }
 
-export type AuditStatus = 'pending' | 'ok' | 'fail'
+export type AuditStatus = 'pending' | 'ok' | 'fail' | 'degraded'
+
+/** 防作弊牌局的狀態提示（降級、作廢、斷線、逾時） */
+export interface SecureStatus {
+  degradedNote: string | null
+  incidents: TableIncident[]
+  hostLost: boolean
+  spectator: boolean
+}
 
 export function useTableSession(options: TableSessionOptions = {}) {
   const localSeat = ref<SeatIndex>(options.localSeat ?? 0)
@@ -74,11 +82,25 @@ export function useTableSession(options: TableSessionOptions = {}) {
   // ---- 防作弊牌局（兩位以上真人）----
   const securityFault = ref<DeckFault | null>(null)
   const secureAudited = ref(false)
+  const secureStatus = ref<SecureStatus>({ degradedNote: null, incidents: [], hostLost: false, spectator: false })
   let secure: SecureTable | null = null
+  let watchdog: ReturnType<typeof setInterval> | null = null
+
+  function refreshSecureStatus(): void {
+    if (!secure) return
+    secureAudited.value = secure.audited
+    secureStatus.value = {
+      degradedNote: secure.degradedNote,
+      incidents: [...secure.incidents],
+      hostLost: secure.hostLost,
+      spectator: secure.spectator,
+    }
+  }
 
   const auditStatus = computed<AuditStatus>(() => {
     if (securityFault.value || !state.auditVerified) return 'fail'
     if (secure && !secureAudited.value) return 'pending'
+    if (secureStatus.value.degradedNote) return 'degraded'
     return 'ok'
   })
 
@@ -522,7 +544,7 @@ export function useTableSession(options: TableSessionOptions = {}) {
       onStep: (_actor, action) => {
         playActionSfx(action, lastHead)
         lastHead = state.headCursor
-        secureAudited.value = secure?.audited ?? false
+        refreshSecureStatus()
         if (action === null && state.phase === 'TURN_ACTION_OR_DISCARD') playSfx('shuffle')
         if (action && (action.type === 'DISCARD' || action.type === 'DECLARE_MIGI')) {
           migiSelectMode.value = false
@@ -533,7 +555,7 @@ export function useTableSession(options: TableSessionOptions = {}) {
       },
       onFault: (f) => {
         securityFault.value = f
-        secureAudited.value = secure?.audited ?? false
+        refreshSecureStatus()
         clearBotTimer()
         viewSeq.value++
       },
@@ -547,7 +569,13 @@ export function useTableSession(options: TableSessionOptions = {}) {
       // 客機：先處理觸發開局的那則（序號最小），再接管大廳暫存的後續訊息，順序才不會亂
       if (!isHost.value && options.initialMessage) handleProtocolMessage(options.initialMessage)
       transport?.setMessageSink(handleProtocolMessage)
-      if (isHost.value) secure.startRound()
+      const table = secure
+      transport?.setPeerLeftHandler((peer) => (peer ? table.onPeerLeft(peer) : table.onHostLost()))
+      if (isHost.value) {
+        // 協定逾時（金鑰分享、宣告、公開秘密卡住）由房主判定，比照斷線處理
+        watchdog = setInterval(() => table.tick(), 2000)
+        secure.startRound()
+      }
       return
     }
     // 牌桌就緒才接管連線訊息，之前的訊息由 transport 暫存
@@ -584,7 +612,9 @@ export function useTableSession(options: TableSessionOptions = {}) {
 
   onUnmounted(() => {
     clearBotTimer()
+    if (watchdog) clearInterval(watchdog)
     transport?.setMessageSink(null)
+    transport?.setPeerLeftHandler(null)
   })
 
   return {
@@ -606,6 +636,7 @@ export function useTableSession(options: TableSessionOptions = {}) {
     convertSeatToBot,
     auditStatus,
     securityFault,
+    secureStatus,
     exportEvidence,
   }
 }

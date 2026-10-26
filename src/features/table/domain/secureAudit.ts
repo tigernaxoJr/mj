@@ -47,6 +47,13 @@ function seatView(s: TableState['seats'][number]): unknown {
   }
 }
 
+/** 這一家此刻是否該行動（輪到他，或回應窗中還沒回應）；不該他行動時送出的動作視為重複點擊而忽略 */
+export function seatHasDuty(state: TableState, seat: SeatIndex): boolean {
+  if (state.phase === 'TURN_ACTION_OR_DISCARD') return state.currentSeat === seat
+  if (state.phase === 'CLAIM_WINDOW') return state.claimWindow.some((c) => c.seat === seat && !c.responded)
+  return false
+}
+
 /** 四家都算得出、且必定相同的局面摘要 */
 export function publicProjection(state: TableState): string {
   return canonicalJson(publicView(state))

@@ -10,6 +10,7 @@ import type {
   PlayerId,
   ProtocolMessage,
   RoomMemberKeys,
+  RuleConfig,
   SeatIndex,
   SignedEnvelope,
 } from '@/shared/kernel/types'
@@ -66,6 +67,10 @@ export interface EvidenceLog {
   recordedBySeat: SeatIndex
   members: RoomMemberKeys[]
   envelopes: SignedEnvelope[]
+  /** 牌局規則（重播計分需要） */
+  rules?: RuleConfig
+  /** 本機記錄的斷線、逾時、降級事件 */
+  incidents?: { round: number; seat: SeatIndex; reason: string; outcome: string }[]
 }
 
 export class SecureChannel {

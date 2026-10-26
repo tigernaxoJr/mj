@@ -50,7 +50,11 @@ export interface PeerTransportPort {
   holdMessages(): void
   /** 牌桌接管所有後續訊息，並先送出暫存內容；傳入 null 取消接管 */
   setMessageSink(sink: MessageSink | null): void
+  /** 牌桌接管斷線通知：房主收到離線客機的槽位，客機收到 undefined（與房主斷線） */
+  setPeerLeftHandler(handler: PeerLeftHandler | null): void
 }
+
+export type PeerLeftHandler = (peerSlotId?: PlayerId) => void
 
 /** `fromPeer` 僅房主端有值（客機槽位 id） */
 export type MessageSink = (msg: ProtocolMessage, fromPeer?: PlayerId) => void
@@ -159,11 +163,16 @@ export class PeerJsAdapter implements PeerTransportPort {
   private resolvedConfig: ResolvedPeerConfig = getPeerConfig()
   private currentSignalingInfo: SignalingEndpointInfo
   private sink: MessageSink | null = null
+  private peerLeft: PeerLeftHandler | null = null
   private holding = false
   private held: Array<{ msg: ProtocolMessage; from?: PlayerId }> = []
 
   holdMessages(): void {
     this.holding = true
+  }
+
+  setPeerLeftHandler(handler: PeerLeftHandler | null): void {
+    this.peerLeft = handler
   }
 
   setMessageSink(sink: MessageSink | null): void {
@@ -354,19 +363,15 @@ export class PeerJsAdapter implements PeerTransportPort {
           }
         })
 
-        conn.on('close', () => {
+        const onLeft = () => {
           if (this.clientConns.get(slotId) === conn) {
             this.clientConns.delete(slotId)
-            callbacks.onPeerDisconnected(slotId)
+            if (this.peerLeft) this.peerLeft(slotId)
+            else callbacks.onPeerDisconnected(slotId)
           }
-        })
-
-        conn.on('error', () => {
-          if (this.clientConns.get(slotId) === conn) {
-            this.clientConns.delete(slotId)
-            callbacks.onPeerDisconnected(slotId)
-          }
-        })
+        }
+        conn.on('close', onLeft)
+        conn.on('error', onLeft)
       })
     })
   }
@@ -485,7 +490,8 @@ export class PeerJsAdapter implements PeerTransportPort {
         conn.on('close', () => {
           if (this.hostConn === conn) {
             this.hostConn = null
-            callbacks.onDisconnected('與房主的連線已關閉（或房間人數已滿）')
+            if (this.peerLeft) this.peerLeft()
+            else callbacks.onDisconnected('與房主的連線已關閉（或房間人數已滿）')
           }
         })
       })
@@ -527,6 +533,7 @@ export class PeerJsAdapter implements PeerTransportPort {
   disconnect(): void {
     this.isLocked = false
     this.sink = null
+    this.peerLeft = null
     this.holding = false
     this.held = []
     for (const conn of this.clientConns.values()) {

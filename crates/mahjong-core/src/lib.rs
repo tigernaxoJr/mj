@@ -247,6 +247,37 @@ pub fn mp_open_share(
         .map(|k| k.to_bytes().to_vec()))
 }
 
+/// 任意內容的端對端加密（斷線降級用）；情境不可與金鑰分享重複
+#[wasm_bindgen]
+pub fn mp_seal_bytes(
+    box_seed: &[u8],
+    recipient_box_pub: &[u8],
+    round: u32,
+    wall_index: u16,
+    from_seat: u8,
+    to_seat: u8,
+    plain: &[u8],
+) -> Result<Vec<u8>, JsError> {
+    let id = mp::Identity::from_seeds([0u8; 32], arr32(box_seed, "加密種子")?);
+    let recipient = arr32(recipient_box_pub, "收方公鑰")?;
+    Ok(id.seal_bytes(&recipient, share_ctx(round, wall_index, from_seat, to_seat), plain))
+}
+
+#[wasm_bindgen]
+pub fn mp_open_bytes(
+    box_seed: &[u8],
+    sender_box_pub: &[u8],
+    round: u32,
+    wall_index: u16,
+    from_seat: u8,
+    to_seat: u8,
+    sealed: &[u8],
+) -> Result<Option<Vec<u8>>, JsError> {
+    let id = mp::Identity::from_seeds([0u8; 32], arr32(box_seed, "加密種子")?);
+    let sender = arr32(sender_box_pub, "送方公鑰")?;
+    Ok(id.open_bytes(&sender, share_ctx(round, wall_index, from_seat, to_seat), sealed))
+}
+
 /// 房間安全碼；`members` 為 n × 65 bytes：`seat(1) ‖ signPub(32) ‖ boxPub(32)`
 #[wasm_bindgen]
 pub fn mp_room_fingerprint(room_code: &str, members: &[u8]) -> Result<Vec<u8>, JsError> {

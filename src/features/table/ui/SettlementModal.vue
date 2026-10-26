@@ -9,15 +9,18 @@ const props = withDefaults(
     state: TableState
     /** 連線客機不能自行開下一局，須等房主 */
     canAdvance?: boolean
-    auditStatus?: 'pending' | 'ok' | 'fail'
+    auditStatus?: 'pending' | 'ok' | 'fail' | 'degraded'
     auditNote?: string
+    /** 防作弊牌局：可下載本機保存的簽章紀錄 */
+    canExport?: boolean
   }>(),
-  { canAdvance: true, auditStatus: 'ok', auditNote: '' },
+  { canAdvance: true, auditStatus: 'ok', auditNote: '', canExport: false },
 )
 
 const emit = defineEmits<{
   nextRound: []
   backToLobby: []
+  exportEvidence: []
 }>()
 
 const windLabels: Record<SeatIndex, string> = { 0: '東', 1: '南', 2: '西', 3: '北' }
@@ -199,7 +202,15 @@ function signed(n: number): string {
         >
           <p
             class="text-[11px]"
-            :class="auditStatus === 'ok' ? 'text-[var(--jade-hi)]' : auditStatus === 'pending' ? 'text-[var(--muted)]' : 'text-[#ff9c85]'"
+            :class="
+              auditStatus === 'ok'
+                ? 'text-[var(--jade-hi)]'
+                : auditStatus === 'pending'
+                  ? 'text-[var(--muted)]'
+                  : auditStatus === 'degraded'
+                    ? 'text-[var(--brass-hi)]'
+                    : 'text-[#ff9c85]'
+            "
             aria-live="polite"
           >
             {{ auditNote || (state.auditVerified ? '✓ 牌山承諾驗證通過' : '⚠ 牌山承諾異常') }}
@@ -208,6 +219,15 @@ function signed(n: number): string {
           <div class="flex w-full gap-2 sm:w-auto short:w-auto">
             <button type="button" class="btn-ghost h-11 shrink-0 rounded-2xl px-4 text-sm font-bold" @click="peek = true">
               看牌
+            </button>
+            <button
+              v-if="canExport"
+              type="button"
+              class="btn-ghost h-11 shrink-0 rounded-2xl px-4 text-sm font-bold"
+              title="下載本機保存的簽章紀錄，可交給第三方驗證"
+              @click="emit('exportEvidence')"
+            >
+              紀錄
             </button>
             <button type="button" class="btn-ghost h-11 flex-1 rounded-2xl px-5 text-sm font-bold sm:flex-none" @click="emit('backToLobby')">
               返回大廳

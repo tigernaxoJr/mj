@@ -1,3 +1,5 @@
 export { createInitialTableState, type TableState, type PlayerSeatState } from './domain/tableState'
 export { useTableSession } from './application/useTableSession'
 export { default as TableArena } from './ui/TableArena.vue'
+export { verifyEvidence, type EvidenceReport, type RoundReport } from './application/evidenceVerifier'
+export type { EvidenceLog } from './application/secureChannel'

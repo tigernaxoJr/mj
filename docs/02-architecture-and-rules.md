@@ -84,7 +84,33 @@
 
 ---
 
-## 4. P2P 防作弊連線協議 (`Co-Seeded Commit-Reveal`)
+## 4. P2P 防作弊連線協議
+
+連線房間依真人人數分兩種流程（完整設計見 [`04-host-anticheat-mental-poker.md`](./04-host-anticheat-mental-poker.md)）：
+
+| 房間 | 流程 | 房主看得到 |
+|---|---|---|
+| 1 位真人（房主）+ 電腦 | 本機單人，無連線訊息 | 全部（自己的牌局） |
+| 2 位以上真人 | **Mental Poker 牌局**（§4.1） | 自己與電腦座位的牌；看不到其他真人的手牌與未摸的牌山 |
+| 牌局中有真人離開 | 降級為房主發牌（§4.2），或依「斷線即作廢」設定作廢 | 全部（結算標示未完整驗證） |
+
+### 4.1 Mental Poker 牌局（兩位以上真人）
+
+1. **大廳身分握手（未簽章）**：`IDENTITY_COMMIT {commit = sha256(公鑰)}` → 房主按開局鎖定 `IDENTITY_ROSTER` → 各家 `IDENTITY_REVEAL {signPub, boxPub}` → `IDENTITY_KEYS`。每台裝置自行計算 4 個 emoji 的房間安全碼，口頭比對一致才開局。
+2. **簽章信封**：之後所有訊息包成 `SIGNED {seat, n, body, sig}`（ed25519、序號遞增）。房主驗證後原封不動轉送給全部客機（含發送者），是唯一的排序者。每台裝置保存全部信封，可在結算畫面「紀錄」下載，任何人可在大廳「驗證對局紀錄檔」重新驗簽、稽核並重算分數。
+3. **洗牌與換鑰**：`ROUND_START` → 各真人依座位順序 `DECK_SHUFFLED`，再依序 `DECK_REKEYED`（附 144 筆逐張鎖承諾）。
+4. **摸牌**：規則引擎讀到未宣告的牌山位置時，各層持有者把逐張鎖以 `crypto_box` 封給摸牌者（電腦座位則封給房主）：`KEY_SHARE`；摸牌者開鎖後 `TILE_RESOLVE`（花牌附金鑰公開）。
+5. **動作**：`SECURE_ACTION {seat, action, reveals}`，附上動作用到的牌與全部層的金鑰；每次打牌後其餘三家一律回應（沒得吃碰胡就自動「過」）。
+6. **結算**：各家 `ROUND_REVEAL {secret}`，重算洗牌、換鑰、承諾，再以完整資訊重播整局並逐步比對公開投影；失敗時指出座位與步驟。牌局中途發現違規時立即作廢並提早公開秘密。
+
+### 4.2 斷線降級（牌局中有真人離開或逾時）
+
+- 房主以 `DEGRADE {seat, reason}` 宣告（WebRTC 斷線；或協定步驟 15 秒、輪到該真人卻 60 秒毫無動靜）。開啟「斷線即作廢」時改送 `ROUND_VOID`，本局不計分。
+- 留下的真人把暗牌證明加密給房主：`DEGRADE_HAND`；房主以 Co-Seeded Commit-Reveal 重洗未知牌池：`DEGRADE_COMMIT` → `DEGRADE_SEED` → `DEGRADE_WALL {roundSeed, leafHashes, slots}`。
+- 之後房主私下發牌 `DEGRADE_DEAL`，公開的牌以承諾葉節點證明；代打座位拿重洗順序中前 n 張非花牌當新手牌。
+- 結算時 `DEGRADE_REVEAL {secret}`，各家驗證承諾、自己的種子、葉節點與排序規則；結算畫面標示「本局防作弊已失效」。
+
+### 4.3 房主權威流程（`Co-Seeded Commit-Reveal`，保留供相容）
 
 1. **搖骰承諾階段**：
    - `SEED_COMMIT`: `{ type: 'SEED_COMMIT', playerId, commitHash }`

@@ -36,6 +36,8 @@ export interface RuleConfig {
   allowMultiRon: boolean
   /** 出牌思考秒數 (預設 12 秒) */
   turnTimeoutSec: number
+  /** 防作弊牌局有真人斷線時：true = 本局作廢；false（預設）= 降級為房主發牌繼續打 */
+  voidOnDisconnect: boolean
 }
 
 export const DEFAULT_RULE_CONFIG: RuleConfig = {
@@ -43,6 +45,7 @@ export const DEFAULT_RULE_CONFIG: RuleConfig = {
   taiPoints: 100,
   allowMultiRon: false,
   turnTimeoutSec: 12,
+  voidOnDisconnect: false,
 }
 
 export type MeldType = 'chii' | 'pon' | 'minkan' | 'ankan' | 'kakan'
@@ -110,10 +113,15 @@ export interface SignedEnvelope {
   sig: string
 }
 
-/** 公開某牌山位置：依層順序附上每一層的逐張鎖（base64） */
+/**
+ * 公開某牌山位置：依層順序附上每一層的逐張鎖（base64）。
+ * 斷線降級後由房主重發的位置則改用承諾葉節點證明：`keys` 為空，附上 `tile` 與 `salt`。
+ */
 export interface TileRevealProof {
   wallIndex: number
   keys: string[]
+  tile?: TileId
+  salt?: string
 }
 
 /** P2P 連線協議訊息 (Co-Seeded Commit-Reveal) */
@@ -135,6 +143,20 @@ export type ProtocolMessage =
   /** 公開動作：附上動作所需公開的牌（打出、吃碰槓所用、胡牌時整手） */
   | { type: 'SECURE_ACTION'; round: number; seat: SeatIndex; action: PlayerActionCommand; reveals: TileRevealProof[] }
   | { type: 'ROUND_REVEAL'; round: number; seat: SeatIndex; secret: string }
+  // --- 斷線降級（§4.8；只有房主能宣告）---
+  /** 某位真人離開（斷線或逾時）：牌局中則降級為房主發牌，該座位由電腦代打 */
+  | { type: 'DEGRADE'; round: number; seat: SeatIndex; reason: string }
+  /** 嚴格模式：有人斷線本局直接作廢 */
+  | { type: 'ROUND_VOID'; round: number; seat: SeatIndex; reason: string }
+  /** 留下的真人把暗牌證明加密交給房主（其他人看不到） */
+  | { type: 'DEGRADE_HAND'; round: number; seat: SeatIndex; sealed: string }
+  | { type: 'DEGRADE_COMMIT'; round: number; commit: string }
+  | { type: 'DEGRADE_SEED'; round: number; seat: SeatIndex; seed: string }
+  /** 重洗後的牌池承諾：`slots` 為各位置對應的承諾索引（虛擬位置 ≥ 144 為代打座位的新手牌） */
+  | { type: 'DEGRADE_WALL'; round: number; roundSeed: string; leafHashes: string[]; slots: [number, number][] }
+  /** 房主私下把重發的牌交給持有者 */
+  | { type: 'DEGRADE_DEAL'; round: number; to: SeatIndex; wallIndices: number[]; sealed: string }
+  | { type: 'DEGRADE_REVEAL'; round: number; secret: string }
   | { type: 'ROOM_SNAPSHOT'; roomCode: string; seats: [RoomSeatSlot, RoomSeatSlot, RoomSeatSlot, RoomSeatSlot]; rules: RuleConfig }
   | { type: 'SEAT_UPDATE'; seat: SeatIndex; slot: RoomSeatSlot }
   | { type: 'SEED_COMMIT'; seat: SeatIndex; commitHash: string }

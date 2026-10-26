@@ -20,6 +20,7 @@ import {
 } from '../domain/roomSession'
 import { checkMembersAgainstRoster, identityCommit, memberKeysOf, safetyCode } from '../domain/identityHandshake'
 import { createPeerTransport, type PeerTransportPort } from '../infra/peerAdapter'
+import { verifyEvidence, type EvidenceLog, type EvidenceReport } from '@/features/table'
 
 /** 兩位以上真人時的身分資料；牌桌用它簽章與加密金鑰分享 */
 export interface MatchSecurity {
@@ -151,6 +152,23 @@ function guestOnKeys(list: RoomMemberKeys[]): void {
 function security(): MatchSecurity | undefined {
   if (handshake.value !== 'verify' || !seeds || !safetyEmoji.value) return undefined
   return { roomCode: room.roomCode, seeds, members, safetyCode: safetyEmoji.value }
+}
+
+// ---- 第三方驗證：匯入別人（或自己）下載的對局紀錄檔 ----
+const evidenceInput = ref<HTMLInputElement | null>(null)
+const evidenceReport = ref<EvidenceReport | null>(null)
+
+async function onEvidenceFile(ev: Event): Promise<void> {
+  const input = ev.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  try {
+    await initMahjongWasm()
+    evidenceReport.value = verifyEvidence(JSON.parse(await file.text()) as EvidenceLog)
+  } catch {
+    errorText.value = '無法讀取紀錄檔（不是本遊戲下載的 JSON）'
+  }
 }
 
 const startLabel = computed(() => {
@@ -518,6 +536,21 @@ onUnmounted(() => {
             <span class="switch" aria-hidden="true" />
             一炮多響
           </label>
+          <label
+            v-if="tab !== 'solo'"
+            class="flex cursor-pointer items-center gap-2 text-xs font-bold text-[var(--ivory)]"
+            title="兩位以上真人時，有人中途斷線：開啟＝本局作廢；關閉＝降級為房主發牌繼續打"
+          >
+            <input
+              v-model="room.rules.voidOnDisconnect"
+              type="checkbox"
+              class="peer sr-only"
+              :disabled="p2pMode === 'joined'"
+              @change="syncSnapshotToPeers"
+            />
+            <span class="switch" aria-hidden="true" />
+            斷線即作廢
+          </label>
         </div>
 
         <!-- 模式 -->
@@ -620,9 +653,44 @@ onUnmounted(() => {
           {{ startLabel }}
         </button>
         <p class="mt-2 truncate text-center text-[11px] text-[var(--faint)]" aria-live="polite">{{ footerNote }}</p>
+        <div class="mt-1 text-center">
+          <button type="button" class="text-[11px] font-bold text-[var(--muted)] underline-offset-2 hover:text-[var(--brass-hi)] hover:underline" @click="evidenceInput?.click()">
+            驗證對局紀錄檔
+          </button>
+          <input ref="evidenceInput" type="file" accept=".json,application/json" class="hidden" @change="onEvidenceFile" />
+        </div>
         </div>
       </section>
     </div>
+    </div>
+
+    <!-- 對局紀錄驗證結果 -->
+    <div
+      v-if="evidenceReport"
+      class="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="evidence-title"
+      @click.self="evidenceReport = null"
+    >
+      <div class="panel flex max-h-[90dvh] w-full max-w-md flex-col rounded-[22px] p-5">
+        <h2 id="evidence-title" class="font-serif text-lg font-black text-[var(--brass-hi)]">對局紀錄驗證</h2>
+        <p class="mt-1 text-xs text-[var(--muted)]">
+          房號 {{ evidenceReport.roomCode }} · 第 {{ evidenceReport.recordedBySeat + 1 }} 家的紀錄 · {{ evidenceReport.envelopes }} 則簽章訊息
+        </p>
+        <p class="mt-3 rounded-xl px-3 py-2 text-sm font-bold" :class="evidenceReport.ok ? 'bg-[var(--jade)]/15 text-[var(--jade-hi)]' : 'bg-[var(--cinnabar)]/15 text-[#ffb4a3]'">
+          {{ evidenceReport.ok ? '✓ 全部簽章、牌山與計分都驗證通過' : '⚠ 有無法驗證或不一致的地方' }}
+        </p>
+        <ul class="scroll-thin mt-3 min-h-0 flex-1 space-y-1.5 overflow-y-auto text-xs">
+          <li v-for="e in evidenceReport.errors" :key="e" class="text-[#ffb4a3]">{{ e }}</li>
+          <li v-for="r in evidenceReport.rounds" :key="r.round" class="rounded-lg bg-black/25 px-3 py-2">
+            <span class="font-bold text-[var(--ivory)]">第 {{ r.round + 1 }} 局</span>
+            <span class="ml-2" :class="r.status === 'ok' ? 'text-[var(--jade-hi)]' : r.status === 'fault' ? 'text-[#ffb4a3]' : 'text-[var(--brass-hi)]'">{{ r.detail }}</span>
+            <span v-if="r.scoreDeltas" class="block tabular-nums text-[var(--muted)]">分數 {{ r.scoreDeltas.join(' / ') }}</span>
+          </li>
+        </ul>
+        <button type="button" class="btn-ghost mt-4 h-10 rounded-xl text-sm font-bold" @click="evidenceReport = null">關閉</button>
+      </div>
     </div>
   </div>
 </template>
